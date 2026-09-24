@@ -1739,6 +1739,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_onboarding_progress_user ON public.onboardi
 CREATE UNIQUE INDEX IF NOT EXISTS uq_onboarding_answers_user_question ON public.onboarding_answers ("user_id", "question_key");
 CREATE UNIQUE INDEX IF NOT EXISTS uq_store_custom_limits_store ON public.store_custom_limits ("store_id");
 CREATE UNIQUE INDEX IF NOT EXISTS uq_store_delivery_settings_store ON public.store_delivery_settings ("store_id");
+CREATE UNIQUE INDEX IF NOT EXISTS uq_checkout_settings_store ON public.checkout_settings ("store_id");
+CREATE UNIQUE INDEX IF NOT EXISTS uq_store_members_store_user ON public.store_members ("store_id", "user_id");
+CREATE UNIQUE INDEX IF NOT EXISTS uq_store_onboarding_answers_store ON public.store_onboarding_answers ("store_id");
+CREATE UNIQUE INDEX IF NOT EXISTS uq_store_subscriptions_store ON public.store_subscriptions ("store_id");
 CREATE UNIQUE INDEX IF NOT EXISTS uq_store_theme_store ON public.store_theme ("store_id");
 CREATE UNIQUE INDEX IF NOT EXISTS uq_store_wallets_store ON public.store_wallets ("store_id");
 CREATE UNIQUE INDEX IF NOT EXISTS uq_wallets_user ON public.wallets ("user_id");

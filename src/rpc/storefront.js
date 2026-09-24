@@ -31,8 +31,11 @@ export default {
   async get_store_active_theme({ p_store_id }, ctx) {
     if (!(await assertPublicStore(ctx, p_store_id))) return null;
     const instance = await ctx.one(
-      `SELECT ti.configuration, ti.theme_definition_id, ti.preset_id
+      `SELECT ti.configuration, ti.theme_definition_id, ti.preset_id,
+              tp.key AS preset_key, tp.tokens, td.key AS family_key
          FROM public.store_theme_instances ti
+         JOIN public.theme_presets tp ON tp.id = ti.preset_id
+         JOIN public.theme_definitions td ON td.id = ti.theme_definition_id
         WHERE ti.store_id = $1 AND ti.status = 'published'
         ORDER BY ti.published_at DESC NULLS LAST
         LIMIT 1`,
@@ -43,6 +46,9 @@ export default {
         configuration: instance.configuration,
         theme_definition_id: instance.theme_definition_id,
         preset_id: instance.preset_id,
+        presetKey: instance.preset_key,
+        familyKey: instance.family_key,
+        tokens: { ...instance.tokens, ...(instance.configuration || {}) },
       };
     }
     const legacy = await ctx.one(
@@ -50,7 +56,13 @@ export default {
          FROM public.store_theme WHERE store_id = $1`,
       [p_store_id],
     );
-    return legacy ?? null;
+    if (!legacy) return null;
+    return {
+      presetKey: legacy.theme_id || 'oslo',
+      familyKey: legacy.theme_id === 'dakar' ? 'conversion' : null,
+      tokens: { primary: legacy.primary_color, accent: legacy.secondary_color },
+      logo_url: legacy.logo_url,
+    };
   },
 
   /** increment_sales_page_visit(p_page_id) → void */

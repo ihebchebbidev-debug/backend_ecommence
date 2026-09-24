@@ -47,7 +47,8 @@ export const policies = {
   store_custom_limits: admin(),
   store_delivery_integrations: store({ hidden: ['credentials_encrypted', 'credentials_iv', 'credentials_version'] }),
   store_delivery_settings: store(),
-  store_feature_overrides: admin(),
+  // Store members may read their own store's overrides (live "overrides_select_own_store"); only super admins write.
+  store_feature_overrides: store({ writeRoles: [] }),
   store_members: store({ writeRoles: ['owner', 'admin'] }),
   store_onboarding_answers: store(),
   store_order_seq: denied(),
