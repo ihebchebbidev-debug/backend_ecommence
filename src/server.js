@@ -14,6 +14,7 @@ import { storageRouter } from './storage/router.js';
 import { functionsRouter } from './functions/index.js';
 import { attachRealtime } from './realtime/server.js';
 import { autoMigrate } from './db/autoMigrate.js';
+import { seed } from './db/seed.js';
 import { schemaDrift } from './db/schemaModel.js';
 import { docsRouter } from './docs/router.js';
 
@@ -107,6 +108,7 @@ export async function bootstrap({ force = false } = {}) {
     return null;
   }
   lastMigration = await autoMigrate();
+  await seed(log);
 
   // Buckets declared in STORAGE_BUCKETS exist from the start; any other bucket
   // is created by its first upload.
