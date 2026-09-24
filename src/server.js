@@ -22,18 +22,22 @@ const log = createLogger('server');
 export const app = express();
 
 app.disable('x-powered-by');
+// Any origin is allowed. The origin is reflected (not "*") so that credentialed
+// requests keep working, and every requested header is echoed back.
 app.use(
   cors({
     origin: true,
     credentials: true,
-    allowedHeaders: [
-      'authorization', 'apikey', 'x-client-info', 'content-type', 'prefer', 'range',
-      'accept', 'accept-profile', 'content-profile', 'x-upsert', 'x-user-id',
+    // No allowedHeaders list → the CORS preflight reflects whatever the browser asks for.
+    exposedHeaders: [
+      'content-range', 'x-total-count', 'content-length', 'content-type', 'x-request-id',
     ],
-    exposedHeaders: ['content-range', 'x-total-count'],
     methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS', 'HEAD'],
+    maxAge: 86400,
+    optionsSuccessStatus: 204,
   }),
 );
+app.options('*', cors({ origin: true, credentials: true, maxAge: 86400 }));
 
 // Raw body for signature-verified webhooks, JSON everywhere else.
 app.use('/functions/v1/whatsapp-webhook', express.raw({ type: '*/*', limit: '2mb' }));
