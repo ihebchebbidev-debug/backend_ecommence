@@ -58,6 +58,17 @@ async function scopeFilter(ctx, table, policy, op, query) {
       if (!ctx.userId) {
         if (op === 'read' && policy.publicRead && requested)
           return await publicScope(ctx, policy, col, requested);
+        // The storefront resolves a store by its public slug (platform_stores
+        // only): pin the row by slug, still requiring an active store.
+        if (op === 'read' && policy.publicRead && col === 'id') {
+          const slug = eqValue(query.slug);
+          if (slug) {
+            return {
+              where: [`"slug" = $1`, `status = 'active'`, `deleted_at IS NULL`],
+              params: [slug],
+            };
+          }
+        }
         if (op === 'insert' && policy.publicInsert) return { where: [], params: [] };
         throw forbidden('JWT required');
       }
@@ -97,13 +108,16 @@ async function publicScope(_ctx, policy, col, storeId) {
   };
 }
 
-function requestedStoreId(query, col) {
-  const key = col === 'id' ? 'id' : 'store_id';
-  const raw = query[key];
+function eqValue(raw) {
   if (!raw) return null;
   const v = Array.isArray(raw) ? raw[0] : raw;
   const m = String(v).match(/^eq\.(.+)$/);
   return m ? m[1] : null;
+}
+
+function requestedStoreId(query, col) {
+  const key = col === 'id' ? 'id' : 'store_id';
+  return eqValue(query[key]);
 }
 
 function stripHidden(rows, policy, ctx) {

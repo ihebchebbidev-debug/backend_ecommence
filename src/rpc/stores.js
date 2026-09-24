@@ -77,7 +77,10 @@ export default {
       const secondaryColor = String(input.secondary_color || '#64748B');
       const logoUrl = input.logo_url || null;
       const subscriptionPlan = await t.one(
-        `SELECT id FROM public.subscription_plans WHERE lower(name) = $1 AND is_active = true LIMIT 1`,
+        `SELECT id FROM public.subscription_plans
+          WHERE regexp_replace(lower(name), '[^a-z0-9]+', '_', 'g') = $1
+             OR regexp_replace(lower(name), '[^a-z0-9]+', '', 'g') = replace($1, '_', '')
+          ORDER BY is_active DESC, created_at ASC LIMIT 1`,
         [selectedPlan],
       );
 
@@ -85,9 +88,23 @@ export default {
         `INSERT INTO public.platform_stores
            (store_name, slug, country, currency, user_id, subscription_plan, plan_id, status,
             default_language, enabled_languages, store_color, logo_url, settings)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,'active','fr',ARRAY['ar','fr'],$8,$9,'{}'::jsonb)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,'active','fr',ARRAY['ar','fr'],$8,$9,$10::jsonb)
          RETURNING id, store_name, slug`,
-        [storeName, slug, input.country || 'TN', input.currency || 'TND', userId, selectedPlan, subscriptionPlan?.id || null, primaryColor, logoUrl],
+        [storeName, slug, input.country || 'TN', input.currency || 'TND', userId, selectedPlan, subscriptionPlan?.id || null, primaryColor, logoUrl,
+          JSON.stringify({
+            theme_id: themeId,
+            primary_color: primaryColor,
+            secondary_color: secondaryColor,
+            selected_plan: selectedPlan,
+            checkout: {
+              type: input.checkout_type || 'multi_step',
+              position: input.checkout_position || 'right',
+              require_phone: input.require_phone ?? true,
+              require_address: input.require_address ?? true,
+              require_email: input.require_email ?? false,
+              require_notes: input.require_notes ?? false,
+            },
+          })],
       );
 
       await t.q(
@@ -131,10 +148,11 @@ export default {
       );
       await t.q(
         `INSERT INTO public.store_subscriptions
-           (store_id,user_id,plan_id,status,billing_cycle,started_at,trial_ends_at,current_period_end,created_at,updated_at)
+           (store_id,user_id,plan_id,status,billing_cycle,started_at,trial_ends_at,current_period_end,trial_status,created_at,updated_at)
          VALUES ($1,$2,$3,$4,'monthly',now(),
                  CASE WHEN $5 > 0 THEN now() + ($5 || ' days')::interval ELSE NULL END,
                  CASE WHEN $5 > 0 THEN (now() + ($5 || ' days')::interval)::text ELSE NULL END,
+                 CASE WHEN $5 > 0 THEN 'active' ELSE NULL END,
                  now(),now())`,
         [store.id, userId, subscriptionPlan?.id || null, subscriptionStatus, trialDays],
       );
