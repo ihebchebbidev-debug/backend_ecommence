@@ -1,6 +1,6 @@
 // Shop builder — section-based page configs with draft / publish / versions.
 import { validateConfig } from '../lib/sections/index.js';
-import { conflict, notFound } from '../lib/errors.js';
+import { badRequest, conflict, notFound } from '../lib/errors.js';
 
 const DESIGN_ROLES = ['owner', 'admin', 'manager'];
 const KEEP_VERSIONS = 20;
@@ -25,6 +25,31 @@ async function upsert(ctx, storeId, status, config) {
 }
 
 export default {
+  /** Anonymous visitors can send a form only when that exact section is currently published. */
+  async builder_submit_form({ p_store_id, p_section_id, p_name, p_email, p_message }, ctx) {
+    const store = await ctx.one('SELECT id FROM public.platform_stores WHERE id = $1 AND deleted_at IS NULL AND status = $2', [p_store_id, 'active']);
+    if (!store) throw notFound('Boutique introuvable');
+    const pub = await row(ctx, p_store_id, 'published');
+    const section = Object.values(pub?.configuration?.pages || {}).flatMap(page => page.sections || [])
+      .find(s => s.id === p_section_id && (s.type === 'contact_form' || s.type === 'newsletter') && !s.hidden);
+    if (!section) throw badRequest('Formulaire non publié');
+    const name = String(p_name || '').trim(), email = String(p_email || '').trim().toLowerCase(), message = String(p_message || '').trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254 || name.length > 100 || message.length > 2000) throw badRequest('Champs invalides');
+    if (section.type === 'contact_form' && (!name || !message)) throw badRequest('Nom et message requis');
+    const rate = await ctx.one(`SELECT count(*)::int AS total, count(*) FILTER (WHERE email = $2)::int AS per_email
+      FROM public.store_form_submissions WHERE store_id = $1 AND created_at > now() - interval '1 hour'`, [p_store_id, email]);
+    if (rate.total >= 300 || rate.per_email >= 5) throw badRequest('Trop de messages. Réessayez dans une heure.');
+    await ctx.q('INSERT INTO public.store_form_submissions (store_id, section_id, form_title, name, email, message) VALUES ($1,$2,$3,$4,$5,$6)',
+      [p_store_id, p_section_id, String(section.settings?.title || 'Formulaire').slice(0, 100), name || null, email, message || null]);
+    return { success: true };
+  },
+
+  async builder_list_submissions({ p_store_id }, ctx) {
+    ctx.requireAuth();
+    await ctx.assertStoreAccess(p_store_id, DESIGN_ROLES);
+    if (!(await ctx.canViewCustomerData(p_store_id))) throw badRequest('Accès aux données clients indisponible');
+    return ctx.q('SELECT id, section_id, form_title, name, email, message, created_at FROM public.store_form_submissions WHERE store_id = $1 ORDER BY created_at DESC LIMIT 200', [p_store_id]);
+  },
   /** builder_get_draft(p_store_id) → { configuration, updated_at, published_at, has_published } */
   async builder_get_draft({ p_store_id }, ctx) {
     ctx.requireAuth();

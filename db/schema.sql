@@ -1802,4 +1802,19 @@ CREATE TABLE IF NOT EXISTS public.store_theme_versions (
 );
 CREATE INDEX IF NOT EXISTS idx_store_theme_versions_store ON public.store_theme_versions ("store_id", "published_at" DESC);
 
+-- Shop form submissions are private to store staff; visitors submit through a validated RPC.
+CREATE TABLE IF NOT EXISTS public.store_form_submissions (
+  "id" uuid DEFAULT gen_random_uuid() NOT NULL PRIMARY KEY,
+  "store_id" uuid NOT NULL REFERENCES public.platform_stores(id),
+  "section_id" text NOT NULL,
+  "form_title" text NOT NULL,
+  "name" text,
+  "email" text,
+  "message" text,
+  "created_at" timestamptz DEFAULT now() NOT NULL,
+  "updated_at" timestamptz DEFAULT now() NOT NULL
+);
+-- Node REST denies direct access. RPC enforces store membership and customer-data locks.
+CREATE INDEX IF NOT EXISTS idx_store_form_submissions_store_date ON public.store_form_submissions (store_id, created_at DESC);
+
 COMMIT;

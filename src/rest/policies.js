@@ -49,6 +49,7 @@ export const policies = {
   store_delivery_settings: store(),
   // Store members may read their own store's overrides (live "overrides_select_own_store"); only super admins write.
   store_feature_overrides: store({ writeRoles: [] }),
+  store_form_submissions: denied(), // Read only through the staff-checked RPC; submissions only through published forms.
   store_members: store({ writeRoles: ['owner', 'admin'] }),
   store_onboarding_answers: store(),
   store_order_seq: denied(),
