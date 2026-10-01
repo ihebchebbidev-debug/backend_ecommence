@@ -158,9 +158,16 @@ authRouter.put(
   '/user',
   asyncHandler(async (req, res) => {
     const user = await currentUser(req);
-    const { password, email, phone, data } = req.body || {};
+    const { password, email, phone, data, current_password } = req.body || {};
     const sets = [];
     const params = [];
+    // Signed-in password change: when the caller sends the current password, verify it.
+    // (The recovery page sends no current_password and relies on its recovery session.)
+    if (password && current_password !== undefined) {
+      const row = await one('SELECT encrypted_password FROM auth.users WHERE id = $1', [user.id]);
+      const ok = row?.encrypted_password && await bcrypt.compare(String(current_password), row.encrypted_password);
+      if (!ok) throw new ApiError(400, 'Mot de passe actuel incorrect', { code: 'invalid_current_password' });
+    }
     if (password) {
       if (String(password).length < 6)
         throw new ApiError(422, 'Password should be at least 6 characters', { code: 'weak_password' });
@@ -184,7 +191,10 @@ authRouter.put(
 authRouter.post(
   '/logout',
   asyncHandler(async (req, res) => {
-    if (req.ctx.claims?.session_id) {
+    const scope = String(req.query.scope || 'local');
+    if (scope === 'global' && req.ctx.userId) {
+      await q('DELETE FROM auth.sessions WHERE user_id = $1', [req.ctx.userId]);
+    } else if (req.ctx.claims?.session_id) {
       await q('DELETE FROM auth.sessions WHERE id = $1', [req.ctx.claims.session_id]);
     } else if (req.ctx.userId) {
       await q('DELETE FROM auth.sessions WHERE user_id = $1', [req.ctx.userId]);

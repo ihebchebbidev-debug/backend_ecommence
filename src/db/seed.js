@@ -19,12 +19,17 @@ export async function seed(log) {
     );
     await run(
       `INSERT INTO public.subscription_plans (name,price_monthly,price_yearly,is_active)
-       SELECT $1,$2,$2*10,true
+       SELECT $1::text,$2::numeric,$2::numeric*10,true
         WHERE NOT EXISTS (SELECT 1 FROM public.subscription_plans
                            WHERE regexp_replace(lower(name),'[^a-z0-9]+','_','g') = $3)`,
       [p.name, p.price, p.code],
     );
   }
+  // Singleton settings rows the admin pages expect.
+  await run(`INSERT INTO public.phone_verification_settings (id,provider,connection_status)
+             VALUES ('00000000-0000-0000-0000-000000000001','twilio','disconnected') ON CONFLICT (id) DO NOTHING`);
+  await run(`INSERT INTO public.payment_gateway_settings (id,provider,environment)
+             VALUES ('00000000-0000-0000-0000-000000000002','konnect','sandbox') ON CONFLICT (id) DO NOTHING`);
   // Promote configured admin emails (account must already exist).
   const emails = (process.env.SUPER_ADMIN_EMAILS || 'admin@e-commence.shop')
     .split(',').map((e) => e.trim().toLowerCase()).filter(Boolean);

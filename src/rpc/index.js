@@ -18,6 +18,7 @@ import productsRpc from './products.js';
 import deliveryRpc from './delivery.js';
 import paymentsRpc from './payments.js';
 import storefrontRpc from './storefront.js';
+import builderRpc from './builder.js';
 import billingRpc from './billing.js';
 import adminRpc from './admin.js';
 import helpersRpc from './helpers.js';
@@ -32,6 +33,7 @@ export const rpcRegistry = {
   ...deliveryRpc,
   ...paymentsRpc,
   ...storefrontRpc,
+  ...builderRpc,
   ...billingRpc,
   ...adminRpc,
   ...helpersRpc,

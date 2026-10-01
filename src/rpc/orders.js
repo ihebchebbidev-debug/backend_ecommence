@@ -1,9 +1,9 @@
 // SQL RPC functions: orders (spec 3.3).
-import { forbidden } from '../lib/errors.js';
+import { badRequest, forbidden } from '../lib/errors.js';
 
 const ORDER_COLUMNS_SECURE = `
   o.id, o.order_number, o.client_id, o.client_name, o.client_phone, o.product_id,
-  o.product_name, o.quantity, o.amount, o.status, o.region, o.agent_id, o.agent_name,
+  o.product_name, o.quantity, o.amount, o.delivery_fee, o.status, o.region, o.agent_id, o.agent_name,
   o.notes, o.created_at, o.updated_at, o.confirmation_status, o.callback_scheduled_at,
   o.confirmation_notes, o.confirmed_at, o.store_id, o.bundle_id, o.bundle_name,
   o.bundle_label, o.bundle_price, o.bundle_quantity, o.currency, o.order_fee_amount_usd,
@@ -32,6 +32,7 @@ function projectSecureRow(row, canView) {
     product_name: row.product_name,
     quantity: row.quantity,
     amount: row.amount,
+    delivery_fee: row.delivery_fee,
     status: row.status,
     region: row.region,
     agent_id: row.agent_id,
@@ -263,7 +264,25 @@ export default {
     const canView = await ctx.canViewCustomerData(order.store_id);
     const row = await ctx.one(`SELECT o.* FROM public.orders o WHERE o.id = $1`, [p_order_id]);
     if (!row) return [];
-    return [projectSecureRow(row, canView)];
+    const items = await ctx.q(
+      `SELECT id, product_id, product_name, bundle_id, bundle_name, bundle_label,
+              bundle_price, bundle_quantity, quantity, unit_price, line_total, delivery_fee
+       FROM public.order_items WHERE order_id = $1 ORDER BY created_at, id`,
+      [p_order_id],
+    );
+    return [{ ...projectSecureRow(row, canView), items }];
+  },
+
+  async get_order_items({ p_order_id }, ctx) {
+    const order = await ctx.one('SELECT store_id FROM public.orders WHERE id = $1', [p_order_id]);
+    if (!order) return [];
+    await ctx.assertStoreAccess(order.store_id);
+    return ctx.q(
+      `SELECT id, order_id, product_id, product_name, bundle_id, bundle_name, bundle_label,
+              bundle_price, bundle_quantity, quantity, unit_price, line_total, delivery_fee, created_at
+       FROM public.order_items WHERE order_id = $1 ORDER BY created_at, id`,
+      [p_order_id],
+    );
   },
 
   async create_public_order(args, ctx) {
@@ -314,22 +333,48 @@ export default {
       );
       const orderNumber = String(seq.next_val).padStart(5, '0');
 
-      let total = 0;
-      let firstItem = null;
+      const requestedItems = Array.isArray(p_items) ? p_items : [];
+      if (requestedItems.length === 0) throw badRequest('La commande doit contenir au moins un article');
+
+      let itemTotal = 0;
+      let deliveryTotal = 0;
+      const itemRows = [];
       for (const item of p_items || []) {
-        const product = await t.one('SELECT id, name, price FROM public.products WHERE id = $1', [item.product_id]);
-        if (!product) continue;
-        const qty = item.quantity || 1;
-        total += Number(product.price) * qty;
-        if (!firstItem) firstItem = { product, qty };
+        const product = await t.one(
+          'SELECT id, name, price, delivery_fee FROM public.products WHERE id = $1 AND store_id = $2',
+          [item.product_id, p_store_id],
+        );
+        if (!product) throw badRequest('Un article de la commande est introuvable');
+
+        const qty = Math.max(1, Math.trunc(Number(item.quantity) || 1));
+        let bundle = null;
+        if (item.bundle_id) {
+          bundle = await t.one(
+            `SELECT id, name, label, price, quantity, delivery_fee
+             FROM public.product_bundles WHERE id = $1 AND product_id = $2`,
+            [item.bundle_id, product.id],
+          );
+          if (!bundle) throw badRequest('Le lot sélectionné ne correspond pas au produit');
+        }
+
+        const unitPrice = Number(bundle?.price ?? product.price ?? 0);
+        const lineTotal = unitPrice * qty;
+        const deliveryFee = Number(bundle?.delivery_fee ?? product.delivery_fee ?? 0);
+        itemTotal += lineTotal;
+        deliveryTotal += deliveryFee;
+        itemRows.push({ product, bundle, qty, unitPrice, lineTotal, deliveryFee });
       }
+
+      const firstItem = itemRows[0];
+      const total = itemTotal + deliveryTotal;
 
       const order = await t.one(
         `INSERT INTO public.orders (
            store_id, order_number, client_id, client_name, client_phone, client_phone2,
-           product_id, product_name, quantity, amount, currency, status,
+           product_id, product_name, quantity, amount, delivery_fee, currency, status,
+           bundle_id, bundle_name, bundle_label, bundle_price, bundle_quantity,
            payment_provider, address, city, region
-         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'pending',$12,$13,$14,$15)
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'pending',$13,$14,$15,$16,$17,$18,$19,$20,$21)
          RETURNING id, order_number, amount`,
         [
           p_store_id,
@@ -338,17 +383,38 @@ export default {
           p_client?.name || '',
           p_client?.phone || '',
           p_client?.phone2 || '',
-          firstItem?.product.id || null,
-          firstItem?.product.name || '',
-          firstItem?.qty || 0,
+          firstItem.product.id,
+          firstItem.product.name,
+          firstItem.qty,
           total,
+          deliveryTotal,
           p_currency,
+          firstItem.bundle?.id || null,
+          firstItem.bundle?.name || null,
+          firstItem.bundle?.label || null,
+          firstItem.bundle ? firstItem.unitPrice : null,
+          firstItem.bundle?.quantity || null,
           p_payment_provider || p_payment_method || '',
           p_client?.address || '',
           p_client?.city || '',
           p_client?.region || '',
         ],
       );
+
+      for (const item of itemRows) {
+        await t.q(
+          `INSERT INTO public.order_items (
+             order_id, product_id, product_name, bundle_id, bundle_name, bundle_label,
+             bundle_price, bundle_quantity, quantity, unit_price, line_total, delivery_fee
+           ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+          [
+            order.id, item.product.id, item.product.name, item.bundle?.id || null,
+            item.bundle?.name || null, item.bundle?.label || null,
+            item.bundle ? item.unitPrice : null, item.bundle?.quantity || null,
+            item.qty, item.unitPrice, item.lineTotal, item.deliveryFee,
+          ],
+        );
+      }
 
       return [{ order_id: order.id, order_number: order.order_number, total: order.amount }];
     });

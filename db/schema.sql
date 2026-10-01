@@ -441,6 +441,7 @@ CREATE TABLE IF NOT EXISTS public.orders (
   "currency"                         text DEFAULT 'TND' NOT NULL,
   "deleted_at"                       timestamptz,
   "deleted_by"                       uuid,
+  "delivery_fee"                     numeric DEFAULT 0 NOT NULL,
   "delivery_status"                  text,
   "id"                               uuid DEFAULT gen_random_uuid() NOT NULL,
   "locality_id"                      numeric,
@@ -462,6 +463,27 @@ CREATE TABLE IF NOT EXISTS public.orders (
   "tracking_number"                  text,
   "updated_at"                       timestamptz,
   CONSTRAINT orders_pkey PRIMARY KEY ("id")
+);
+
+-- ---------------------------------------------------------------------
+-- order_items
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS public.order_items (
+  "bundle_id"                        uuid,
+  "bundle_label"                     text,
+  "bundle_name"                      text,
+  "bundle_price"                     numeric,
+  "bundle_quantity"                  integer,
+  "created_at"                       timestamptz DEFAULT now() NOT NULL,
+  "delivery_fee"                     numeric DEFAULT 0 NOT NULL,
+  "id"                               uuid DEFAULT gen_random_uuid() NOT NULL,
+  "line_total"                       numeric DEFAULT 0 NOT NULL,
+  "order_id"                         uuid NOT NULL,
+  "product_id"                       uuid,
+  "product_name"                     text,
+  "quantity"                         integer DEFAULT 1 NOT NULL,
+  "unit_price"                       numeric DEFAULT 0 NOT NULL,
+  CONSTRAINT order_items_pkey PRIMARY KEY ("id")
 );
 
 -- ---------------------------------------------------------------------
@@ -1459,6 +1481,14 @@ DO $$ BEGIN
     FOREIGN KEY ("store_id") REFERENCES public.platform_stores ("id") ON DELETE CASCADE;
 EXCEPTION WHEN duplicate_object OR duplicate_table THEN NULL; END $$;
 DO $$ BEGIN
+  ALTER TABLE public.order_items ADD CONSTRAINT order_items_order_id_fkey
+    FOREIGN KEY ("order_id") REFERENCES public.orders ("id") ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object OR duplicate_table THEN NULL; END $$;
+DO $$ BEGIN
+  ALTER TABLE public.order_items ADD CONSTRAINT order_items_product_id_fkey
+    FOREIGN KEY ("product_id") REFERENCES public.products ("id") ON DELETE SET NULL;
+EXCEPTION WHEN duplicate_object OR duplicate_table THEN NULL; END $$;
+DO $$ BEGIN
   ALTER TABLE public.orders ADD CONSTRAINT orders_agent_id_fkey
     FOREIGN KEY ("agent_id") REFERENCES public.team_members ("id") ON DELETE CASCADE;
 EXCEPTION WHEN duplicate_object OR duplicate_table THEN NULL; END $$;
@@ -1683,6 +1713,8 @@ CREATE INDEX IF NOT EXISTS idx_invoices_payment_id ON public.invoices ("payment_
 CREATE INDEX IF NOT EXISTS idx_invoices_store_id ON public.invoices ("store_id");
 CREATE INDEX IF NOT EXISTS idx_invoices_subscription_id ON public.invoices ("subscription_id");
 CREATE INDEX IF NOT EXISTS idx_onboarding_progress_store_id ON public.onboarding_progress ("store_id");
+CREATE INDEX IF NOT EXISTS idx_order_items_order_id ON public.order_items ("order_id");
+CREATE INDEX IF NOT EXISTS idx_order_items_product_id ON public.order_items ("product_id");
 CREATE INDEX IF NOT EXISTS idx_orders_agent_id ON public.orders ("agent_id");
 CREATE INDEX IF NOT EXISTS idx_orders_bundle_id ON public.orders ("bundle_id");
 CREATE INDEX IF NOT EXISTS idx_orders_client_id ON public.orders ("client_id");
@@ -1747,5 +1779,27 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_store_theme_store ON public.store_theme ("s
 CREATE UNIQUE INDEX IF NOT EXISTS uq_store_wallets_store ON public.store_wallets ("store_id");
 CREATE UNIQUE INDEX IF NOT EXISTS uq_wallets_user ON public.wallets ("user_id");
 CREATE UNIQUE INDEX IF NOT EXISTS uq_platform_stores_slug ON public.platform_stores ("slug");
+
+-- ── shop builder: section-based page configs (draft + published) and versions ──
+CREATE TABLE IF NOT EXISTS public.store_builder_configs (
+  "store_id"                         uuid NOT NULL,
+  "status"                           text NOT NULL,
+  "configuration"                    jsonb DEFAULT '{}'::jsonb NOT NULL,
+  "updated_at"                       timestamptz DEFAULT now() NOT NULL,
+  "updated_by"                       uuid,
+  "published_at"                     timestamptz,
+  CONSTRAINT store_builder_configs_pkey PRIMARY KEY ("store_id", "status")
+);
+
+CREATE TABLE IF NOT EXISTS public.store_theme_versions (
+  "id"                               uuid DEFAULT gen_random_uuid() NOT NULL,
+  "store_id"                         uuid NOT NULL,
+  "configuration"                    jsonb NOT NULL,
+  "label"                            text,
+  "published_at"                     timestamptz DEFAULT now() NOT NULL,
+  "published_by"                     uuid,
+  CONSTRAINT store_theme_versions_pkey PRIMARY KEY ("id")
+);
+CREATE INDEX IF NOT EXISTS idx_store_theme_versions_store ON public.store_theme_versions ("store_id", "published_at" DESC);
 
 COMMIT;
