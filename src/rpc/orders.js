@@ -84,7 +84,7 @@ export default {
        FROM public.orders o
        LEFT JOIN public.products pr ON pr.id = o.product_id
        WHERE o.store_id = $1 AND o.deleted_at IS NULL
-       ORDER BY o.created_at DESC`,
+       ORDER BY o.created_at DESC NULLS LAST`,
       [p_store_id],
     );
     return rows.map((r) => projectListRow(r, canView));
@@ -136,7 +136,7 @@ export default {
        FROM public.orders o
        LEFT JOIN public.products pr ON pr.id = o.product_id
        WHERE ${where}
-       ORDER BY o.created_at DESC
+       ORDER BY o.created_at DESC NULLS LAST
        LIMIT $${limitIdx} OFFSET $${offsetIdx}`,
       params,
     );
