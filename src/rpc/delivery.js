@@ -18,7 +18,7 @@ export default {
     return ctx.q(
       `SELECT
          ${PROVIDER_COLUMNS},
-         sdi.integration_mode,
+         dp.integration_mode,
          sdi.has_credentials,
          sdi.default_provider,
          sdi.delivery_cost_tnd,
