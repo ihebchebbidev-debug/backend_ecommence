@@ -373,8 +373,8 @@ export default {
            store_id, order_number, client_id, client_name, client_phone, client_phone2,
            product_id, product_name, quantity, amount, delivery_fee, currency, status,
            bundle_id, bundle_name, bundle_label, bundle_price, bundle_quantity,
-           payment_provider, address, city, region
-         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'pending',$13,$14,$15,$16,$17,$18,$19,$20,$21)
+           payment_provider, address, city, region, created_at, updated_at
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'pending',$13,$14,$15,$16,$17,$18,$19,$20,$21, now(), now())
          RETURNING id, order_number, amount`,
         [
           p_store_id,

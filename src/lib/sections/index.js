@@ -7,6 +7,7 @@ export const SECTION_TYPES = [
   'countdown_banner', 'trust_badges', 'testimonials', 'logos', 'faq', 'newsletter',
   'rich_text', 'gallery', 'contact', 'footer', 'single_product', 'spacer',
   'product_main', 'related_products', 'collection_grid', 'custom_code', 'contact_form',
+  'hero_slider', 'social_icons', 'order_confirmation', 'order_summary', 'next_steps',
 ];
 
 export const LIMITS = { maxPages: 25, maxSectionsPerPage: 40, maxBlocksPerSection: 12, maxBytes: 200 * 1024, maxString: 4000 };
@@ -51,6 +52,9 @@ function cleanAdvanced(st) {
   const num = (k, min, max) => { if (k in st) { const n = Number(st[k]); st[k] = Number.isFinite(n) ? Math.min(max, Math.max(min, Math.round(n))) : 0; } };
   num('_mt', -120, 200); num('_mb', -120, 200); num('_pt', 0, 200); num('_pb', 0, 200); num('_px', 0, 120); num('_radius', 0, 48);
   if ('_width' in st && !['', 'full', 'wide', 'normal', 'narrow'].includes(st._width)) st._width = '';
+  if ('_anim' in st && !['none', 'fade', 'fade-up', 'fade-down', 'fade-left', 'fade-right', 'zoom', 'zoom-out', 'blur', 'flip'].includes(st._anim)) st._anim = 'none';
+  num('_anim_dur', 100, 3000); num('_anim_delay', 0, 3000);
+  if ('_anim_repeat' in st) st._anim_repeat = !!st._anim_repeat;
   if ('_align' in st && !['', 'left', 'center', 'right'].includes(st._align)) st._align = '';
   return st;
 }
@@ -69,6 +73,21 @@ function cleanSection(sec, where) {
       : sec.settings || {}, 'settings')),
     blocks: blocks.map((b) => clean(b, 'block')),
   }, sec.settings);
+}
+
+function assertUniqueIds(sections) {
+  const sectionIds = new Set();
+  for (const section of sections) {
+    if (sectionIds.has(section.id)) throw badRequest(`Identifiant de section dupliqué: ${section.id}`);
+    sectionIds.add(section.id);
+    const blockIds = new Set();
+    for (const block of section.blocks) {
+      const id = typeof block?.id === 'string' ? block.id.trim() : '';
+      if (!id) throw badRequest(`Élément sans identifiant dans ${section.type}`);
+      if (blockIds.has(id)) throw badRequest(`Identifiant d'élément dupliqué dans ${section.type}: ${id}`);
+      blockIds.add(id);
+    }
+  }
 }
 
 /** Validate + sanitize a full builder configuration. Throws 400 on bad input. */
@@ -95,6 +114,8 @@ export function validateConfig(config) {
     }
     pages[handle] = out;
   }
+  const allSections = [config.header, config.footer, ...Object.values(pages).flatMap((page) => page.sections)].filter(Boolean);
+  assertUniqueIds(allSections);
   return {
     template: String(config.template || 'custom').slice(0, 40),
     version: 1,

@@ -69,6 +69,21 @@ async function scopeFilter(ctx, table, policy, op, query) {
             };
           }
         }
+        // Storefront product pages read child rows (reviews, bundles, options)
+        // by product id: allow it only for products of an active store.
+        if (op === 'read' && policy.publicRead && !col && policy.parent) {
+          const parentId = eqValue(query[policy.parent.column]);
+          if (parentId) {
+            return {
+              where: [
+                `"${policy.parent.column}" = $1`,
+                `EXISTS (SELECT 1 FROM public.${policy.parent.table} p JOIN public.platform_stores s ON s.id = p.store_id
+                   WHERE p.id = $1 AND s.status = 'active' AND s.deleted_at IS NULL)`,
+              ],
+              params: [parentId],
+            };
+          }
+        }
         if (op === 'insert' && policy.publicInsert) return { where: [], params: [] };
         throw forbidden('JWT required');
       }

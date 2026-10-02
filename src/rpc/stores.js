@@ -5,6 +5,7 @@ function slugify(name) {
   return String(name || 'store')
     .toLowerCase()
     .trim()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // "Pièces" → "pieces", not "pi-ces"
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/(^-|-$)/g, '')
     .slice(0, 60) || 'store';
