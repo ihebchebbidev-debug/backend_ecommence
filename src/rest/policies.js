@@ -36,6 +36,9 @@ export const policies = {
   delivery_tracking_events: store(),
   finance_fixed_items: store(),
   invoices: store(),
+  // Per-shop fraud lists; rows without store_id are legacy platform entries (admin only).
+  ip_blacklist: store(),
+  phone_blacklist: store(),
   orders: store({ publicInsert: true }),
   products: store({ publicRead: true }),
   product_bundles: store({ storeColumn: null, parent: { table: 'products', column: 'product_id' }, publicRead: true }),
@@ -107,10 +110,8 @@ export const policies = {
   // ── admin-only ─────────────────────────────────────────────────────
   admin_audit_logs: admin(),
   audit_logs: admin(),
-  ip_blacklist: admin(),
   otp_rate_limit_resets: admin(),
   payment_gateway_settings: admin({ hidden: ['api_key', 'api_secret', 'credentials_encrypted', 'credentials_iv'] }),
-  phone_blacklist: admin(),
   phone_settings_audit: admin(),
   phone_verification_settings: admin(),
   whatsapp_webhook_events: admin(),

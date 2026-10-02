@@ -382,6 +382,7 @@ CREATE TABLE IF NOT EXISTS public.invoices (
 -- ip_blacklist (5 columns)
 -- ---------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS public.ip_blacklist (
+  "store_id"                         uuid,
   "blocked_orders"                   numeric,
   "created_at"                       timestamptz,
   "id"                               uuid DEFAULT gen_random_uuid() NOT NULL,
@@ -564,6 +565,7 @@ CREATE TABLE IF NOT EXISTS public.payments (
 -- phone_blacklist (5 columns)
 -- ---------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS public.phone_blacklist (
+  "store_id"                         uuid,
   "client_name"                      text,
   "created_at"                       timestamptz,
   "id"                               uuid DEFAULT gen_random_uuid() NOT NULL,
