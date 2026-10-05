@@ -22,6 +22,9 @@ import builderRpc from './builder.js';
 import billingRpc from './billing.js';
 import adminRpc from './admin.js';
 import helpersRpc from './helpers.js';
+import couponsRpc from './coupons.js';
+import notificationsRpc from './notifications.js';
+import trackingRpc from './tracking.js';
 
 export const rpcRegistry = {
   ...authRpc,
@@ -37,6 +40,9 @@ export const rpcRegistry = {
   ...billingRpc,
   ...adminRpc,
   ...helpersRpc,
+  ...couponsRpc,
+  ...notificationsRpc,
+  ...trackingRpc,
 };
 
 export const rpcRouter = express.Router();
@@ -47,6 +53,7 @@ const handle = asyncHandler(async (req, res) => {
   if (!impl) throw notFound(`Could not find the function public.${fn} in the schema cache`, { code: 'PGRST202' });
 
   const args = req.method === 'GET' ? req.query : req.body || {};
+  if (req.ctx && !req.ctx.requestIp) req.ctx.requestIp = req.ip;
   const result = await impl(args, req.ctx);
 
   // PostgREST returns `null` (not an empty body) for void functions.

@@ -29,7 +29,12 @@ export const policies = {
   categories: store({ publicRead: true }),
   checkout_settings: store({ publicRead: true }),
   clients: store({ writeRoles: ['owner', 'admin', 'manager'] }),
-  coupons: store({ publicRead: true }),
+  // Writes/reads go through permission-checked coupon RPCs; no public enumeration.
+  coupons: store({ writeRoles: [] }),
+  commerce_notifications: denied(),
+  commerce_notification_reads: denied(),
+  coupon_redemptions: denied(),
+  commerce_attempts: denied(),
   crm_calls: store(),
   delivery_integration_secrets: denied(),
   delivery_shipments: store(),

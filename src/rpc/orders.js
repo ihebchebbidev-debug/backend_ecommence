@@ -1,5 +1,7 @@
 // SQL RPC functions: orders (spec 3.3).
+import { createHash } from 'node:crypto';
 import { badRequest, forbidden } from '../lib/errors.js';
+import { id, text, couponCode, priceCheckout, major } from '../lib/commerce.js';
 
 const ORDER_COLUMNS_SECURE = `
   o.id, o.order_number, o.client_id, o.client_name, o.client_phone, o.product_id,
@@ -293,35 +295,53 @@ export default {
       p_currency = 'TND',
       p_payment_provider = null,
       p_payment_method = null,
+      p_coupon_code = '',
+      p_checkout_request_id = null,
     } = args;
 
-    const store = await ctx.one(
-      'SELECT id, status, deleted_at FROM public.platform_stores WHERE id = $1',
-      [p_store_id],
-    );
-    if (!store || store.deleted_at) throw forbidden('Store not found or unavailable');
+    id(p_store_id);
+    const requestId = p_checkout_request_id == null ? null : id(p_checkout_request_id);
+    const client = {
+      name: text(p_client?.name, 120),
+      phone: text(p_client?.phone, 32),
+      phone2: text(p_client?.phone2, 32),
+      email: text(p_client?.email, 255),
+      address: text(p_client?.address, 500),
+      city: text(p_client?.city, 120),
+      region: text(p_client?.region, 120),
+    };
+    if (!Array.isArray(p_items) || p_items.length === 0) throw badRequest('La commande doit contenir au moins un article');
+    // Bundle lines default to one bundle; legacy `quantity` there meant pieces.
+    const items = p_items.map((i) => ({ ...i, bundle_count: i?.bundle_id ? (i.bundle_count ?? 1) : undefined }));
+    const code = couponCode(p_coupon_code);
+    const fingerprint = createHash('sha256').update(JSON.stringify([items, code, client.phone])).digest('hex');
 
     return ctx.tx(async (t) => {
-      let client = null;
-      if (p_client?.phone) {
-        client = await t.one(
-          'SELECT id FROM public.clients WHERE store_id = $1 AND phone = $2 LIMIT 1',
-          [p_store_id, p_client.phone],
-        );
+      // Serialize per shop: order numbers, coupon caps and stock stay consistent.
+      await t.one('SELECT id FROM public.platform_stores WHERE id = $1 FOR UPDATE', [p_store_id]);
+      if (requestId) {
+        const prior = await t.one('SELECT id, order_number, amount, checkout_fingerprint FROM public.orders WHERE store_id=$1 AND checkout_request_id=$2', [p_store_id, requestId]);
+        if (prior) {
+          if (prior.checkout_fingerprint !== fingerprint) throw badRequest('Checkout request reused with different content', { code: 'CHECKOUT_CONFLICT' });
+          return [{ order_id: prior.id, order_number: prior.order_number, total: prior.amount }];
+        }
       }
-      if (!client) {
-        client = await t.one(
+
+      const quote = await priceCheckout(t, p_store_id, items, p_currency, code, true);
+      if (code) {
+        const plan = await t.one(`SELECT coalesce(o.is_enabled,pl.has_coupons,false) AS allowed FROM public.platform_stores s
+          LEFT JOIN public.store_feature_overrides o ON o.store_id=s.id AND o.feature_key='has_coupons'
+          LEFT JOIN LATERAL (SELECT has_coupons FROM public.plan_limits WHERE plan_id=s.plan_id OR plan=s.subscription_plan ORDER BY (plan_id=s.plan_id) DESC LIMIT 1) pl ON true WHERE s.id=$1`, [p_store_id]);
+        if (!plan?.allowed) throw badRequest('Coupon unavailable', { code: 'COUPON_INVALID' });
+      }
+
+      let clientRow = null;
+      if (client.phone) clientRow = await t.one('SELECT id FROM public.clients WHERE store_id = $1 AND phone = $2 LIMIT 1', [p_store_id, client.phone]);
+      if (!clientRow) {
+        clientRow = await t.one(
           `INSERT INTO public.clients (store_id, name, phone, email, city, region, note)
-           VALUES ($1, $2, $3, $4, $5, $6, '')
-           RETURNING id`,
-          [
-            p_store_id,
-            p_client?.name || '',
-            p_client?.phone || '',
-            p_client?.email || '',
-            p_client?.city || '',
-            p_client?.region || '',
-          ],
+           VALUES ($1, $2, $3, $4, $5, $6, '') RETURNING id`,
+          [p_store_id, client.name, client.phone, client.email, client.city, client.region],
         );
       }
 
@@ -332,87 +352,52 @@ export default {
         [p_store_id],
       );
       const orderNumber = String(seq.next_val).padStart(5, '0');
-
-      const requestedItems = Array.isArray(p_items) ? p_items : [];
-      if (requestedItems.length === 0) throw badRequest('La commande doit contenir au moins un article');
-
-      let itemTotal = 0;
-      let deliveryTotal = 0;
-      const itemRows = [];
-      for (const item of p_items || []) {
-        const product = await t.one(
-          'SELECT id, name, price, delivery_fee FROM public.products WHERE id = $1 AND store_id = $2',
-          [item.product_id, p_store_id],
-        );
-        if (!product) throw badRequest('Un article de la commande est introuvable');
-
-        const qty = Math.max(1, Math.trunc(Number(item.quantity) || 1));
-        let bundle = null;
-        if (item.bundle_id) {
-          bundle = await t.one(
-            `SELECT id, name, label, price, quantity, delivery_fee
-             FROM public.product_bundles WHERE id = $1 AND product_id = $2`,
-            [item.bundle_id, product.id],
-          );
-          if (!bundle) throw badRequest('Le lot sélectionné ne correspond pas au produit');
-        }
-
-        const unitPrice = Number(bundle?.price ?? product.price ?? 0);
-        const lineTotal = unitPrice * qty;
-        const deliveryFee = Number(bundle?.delivery_fee ?? product.delivery_fee ?? 0);
-        itemTotal += lineTotal;
-        deliveryTotal += deliveryFee;
-        itemRows.push({ product, bundle, qty, unitPrice, lineTotal, deliveryFee });
-      }
-
-      const firstItem = itemRows[0];
-      const total = itemTotal + deliveryTotal;
+      const first = quote.rows[0];
 
       const order = await t.one(
         `INSERT INTO public.orders (
            store_id, order_number, client_id, client_name, client_phone, client_phone2,
            product_id, product_name, quantity, amount, delivery_fee, currency, status,
            bundle_id, bundle_name, bundle_label, bundle_price, bundle_quantity,
-           payment_provider, address, city, region, created_at, updated_at
-         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'pending',$13,$14,$15,$16,$17,$18,$19,$20,$21, now(), now())
+           payment_provider, address, city, region, merchandise_subtotal, discount_amount,
+           coupon_code, checkout_request_id, checkout_fingerprint, created_at, updated_at
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'pending',$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26, now(), now())
          RETURNING id, order_number, amount`,
         [
-          p_store_id,
-          orderNumber,
-          client.id,
-          p_client?.name || '',
-          p_client?.phone || '',
-          p_client?.phone2 || '',
-          firstItem.product.id,
-          firstItem.product.name,
-          firstItem.qty,
-          total,
-          deliveryTotal,
-          p_currency,
-          firstItem.bundle?.id || null,
-          firstItem.bundle?.name || null,
-          firstItem.bundle?.label || null,
-          firstItem.bundle ? firstItem.unitPrice : null,
-          firstItem.bundle?.quantity || null,
-          p_payment_provider || p_payment_method || '',
-          p_client?.address || '',
-          p_client?.city || '',
-          p_client?.region || '',
+          p_store_id, orderNumber, clientRow.id, client.name, client.phone, client.phone2,
+          first.product.id, first.product.name, first.qty, quote.total, quote.delivery, p_currency,
+          first.bundle?.id || null, first.bundle?.name || null, first.bundle?.label || null,
+          first.bundlePrice, first.bundle?.quantity || null,
+          text(p_payment_provider || p_payment_method || '', 60),
+          client.address, client.city, client.region,
+          quote.subtotal, quote.discount, quote.coupon ? code : null, requestId, fingerprint,
         ],
       );
 
-      for (const item of itemRows) {
+      for (const r of quote.rows) {
         await t.q(
           `INSERT INTO public.order_items (
              order_id, product_id, product_name, bundle_id, bundle_name, bundle_label,
-             bundle_price, bundle_quantity, quantity, unit_price, line_total, delivery_fee
-           ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+             bundle_price, bundle_quantity, quantity, unit_price, line_total, delivery_fee, discount_amount
+           ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
           [
-            order.id, item.product.id, item.product.name, item.bundle?.id || null,
-            item.bundle?.name || null, item.bundle?.label || null,
-            item.bundle ? item.unitPrice : null, item.bundle?.quantity || null,
-            item.qty, item.unitPrice, item.lineTotal, item.deliveryFee,
+            order.id, r.product.id, r.product.name, r.bundle?.id || null, r.bundle?.name || null,
+            r.bundle?.label || null, r.bundlePrice, r.bundle?.quantity || null,
+            r.qty, r.unitPrice, r.lineTotal, r.deliveryFee, major(r.discountMinor, p_currency),
           ],
+        );
+      }
+
+      // Reserve finite inventory (rows already locked by priceCheckout).
+      for (const { product, required } of quote.stock.values()) {
+        if (product.stock != null) await t.q('UPDATE public.products SET stock = stock - $2 WHERE id = $1', [product.id, required]);
+      }
+
+      if (quote.coupon) {
+        await t.q('UPDATE public.coupons SET used_count = used_count + 1 WHERE id = $1', [quote.coupon.id]);
+        await t.q(
+          'INSERT INTO public.coupon_redemptions (order_id, coupon_id, store_id, code, discount_amount) VALUES ($1,$2,$3,$4,$5)',
+          [order.id, quote.coupon.id, p_store_id, code, quote.discount],
         );
       }
 
