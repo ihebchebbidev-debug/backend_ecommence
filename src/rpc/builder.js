@@ -101,7 +101,7 @@ export default {
       const config = validateConfig(draft.configuration);
       const pub = await upsert(t, p_store_id, 'published', config, ctx.userId);
       await t.q(
-        `INSERT INTO public.store_theme_versions (store_id, configuration, label, published_by) VALUES ($1, $2::jsonb, $3, $4)`,
+        `INSERT INTO public.store_theme_versions (store_id, configuration, label, published_by, published_at) VALUES ($1, $2::jsonb, $3, $4, clock_timestamp())`,
         [p_store_id, JSON.stringify(config), p_label ? String(p_label).slice(0, 80) : null, ctx.userId],
       );
       await t.q(
@@ -119,7 +119,7 @@ export default {
     await ctx.assertStoreAccess(p_store_id, DESIGN_ROLES);
     return ctx.q(
       `SELECT id, label, published_at, configuration->>'template' AS template
-         FROM public.store_theme_versions WHERE store_id = $1 ORDER BY published_at DESC`,
+         FROM public.store_theme_versions WHERE store_id = $1 ORDER BY published_at DESC, id DESC LIMIT ${KEEP_VERSIONS}`,
       [p_store_id],
     );
   },
