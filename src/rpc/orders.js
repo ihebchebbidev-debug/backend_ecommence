@@ -1,3 +1,4 @@
+import { ALL_PLANS_UNLOCKED } from './billing.js';
 // SQL RPC functions: orders (spec 3.3).
 import { createHash } from 'node:crypto';
 import { badRequest, forbidden } from '../lib/errors.js';
@@ -332,7 +333,7 @@ export default {
         const plan = await t.one(`SELECT coalesce(o.is_enabled,pl.has_coupons,false) AS allowed FROM public.platform_stores s
           LEFT JOIN public.store_feature_overrides o ON o.store_id=s.id AND o.feature_key='has_coupons'
           LEFT JOIN LATERAL (SELECT has_coupons FROM public.plan_limits WHERE plan_id=s.plan_id OR plan=s.subscription_plan ORDER BY (plan_id=s.plan_id) DESC LIMIT 1) pl ON true WHERE s.id=$1`, [p_store_id]);
-        if (!plan?.allowed) throw badRequest('Coupon unavailable', { code: 'COUPON_INVALID' });
+        if (!ALL_PLANS_UNLOCKED && !plan?.allowed) throw badRequest('Coupon unavailable', { code: 'COUPON_INVALID' });
       }
 
       let clientRow = null;

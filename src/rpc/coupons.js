@@ -1,3 +1,4 @@
+import { ALL_PLANS_UNLOCKED } from './billing.js';
 import { badRequest, forbidden, conflict } from '../lib/errors.js';
 import billing from './billing.js';
 import { id, permission, couponCode, boundedInt, priceCheckout, rateLimit, money } from '../lib/commerce.js';
@@ -65,7 +66,7 @@ export default {
       const plan=await ctx.one(`SELECT coalesce(o.is_enabled,pl.has_coupons,false) AS allowed FROM public.platform_stores s
         LEFT JOIN public.store_feature_overrides o ON o.store_id=s.id AND o.feature_key='has_coupons'
         LEFT JOIN LATERAL (SELECT has_coupons FROM public.plan_limits WHERE plan_id=s.plan_id OR plan=s.subscription_plan ORDER BY (plan_id=s.plan_id) DESC LIMIT 1) pl ON true WHERE s.id=$1`,[p_store_id]);
-      if (!plan?.allowed) throw badRequest('Coupon unavailable',{code:'COUPON_INVALID'});
+      if (!ALL_PLANS_UNLOCKED && !plan?.allowed) throw badRequest('Coupon unavailable',{code:'COUPON_INVALID'});
     }
     return {subtotal:quote.subtotal,discount:quote.discount,delivery:quote.delivery,total:quote.total,currency:p_currency,coupon_code:code || null};
   },

@@ -59,6 +59,12 @@ BEGIN
   IF kind IS NOT NULL THEN
     INSERT INTO public.commerce_notifications(store_id,type,source_id,event_key,data)
     VALUES(NEW.store_id,kind,NEW.id,kind||':'||NEW.id,payload) ON CONFLICT(event_key) DO NOTHING;
+    -- First cancellation of a checkout order returns its reserved stock (once, keyed by the event).
+    IF kind = 'order_cancelled' AND FOUND AND NEW.merchandise_subtotal IS NOT NULL THEN
+      UPDATE public.products p SET stock = p.stock + i.qty
+      FROM (SELECT product_id, sum(quantity)::int AS qty FROM public.order_items WHERE order_id = NEW.id GROUP BY product_id) i
+      WHERE p.id = i.product_id AND p.stock IS NOT NULL;
+    END IF;
   END IF;
   IF TG_OP = 'UPDATE' AND NEW.payment_status = 'paid' AND OLD.payment_status IS DISTINCT FROM 'paid' THEN
     INSERT INTO public.commerce_notifications(store_id,type,source_id,event_key,data)

@@ -1,6 +1,9 @@
 // Plans & Billing — spec 3.10
 import { forbidden, badRequest } from '../lib/errors.js';
 
+// DEV/TEST: set UNLOCK_ALL_PLANS=true to grant every feature and unlimited quotas.
+export const ALL_PLANS_UNLOCKED = String(process.env.UNLOCK_ALL_PLANS ?? 'true').toLowerCase() === 'true';
+
 const BOOLEAN_LIMIT_KEYS = new Set([
   'can_advanced_analytics', 'can_api_access', 'can_custom_domain', 'can_export_data',
   'can_multi_currency', 'has_ab_testing', 'has_advanced_crm', 'has_advanced_roles',
@@ -35,6 +38,7 @@ export default {
   /** plan_allows(p_store_id, p_feature_key) → boolean */
   async plan_allows({ p_store_id, p_feature_key }, ctx) {
     await ctx.assertStoreAccess(p_store_id);
+    if (ALL_PLANS_UNLOCKED) return true;
     const override = await ctx.one(
       `SELECT is_enabled FROM public.store_feature_overrides WHERE store_id = $1 AND feature_key = $2`,
       [p_store_id, p_feature_key],
@@ -48,6 +52,10 @@ export default {
   /** plan_limit(p_store_id, p_limit_key) → number */
   async plan_limit({ p_store_id, p_limit_key }, ctx) {
     await ctx.assertStoreAccess(p_store_id);
+    if (ALL_PLANS_UNLOCKED) {
+      if (p_limit_key === 'per_order_fee') return 0;
+      if (String(p_limit_key).startsWith('max_')) return 1000000000;
+    }
     const custom = await ctx.one(
       `SELECT * FROM public.store_custom_limits WHERE store_id = $1`,
       [p_store_id],
