@@ -394,6 +394,14 @@ export default {
         if (product.stock != null) await t.q('UPDATE public.products SET stock = stock - $2 WHERE id = $1', [product.id, required]);
       }
 
+      // Immutable snapshot of the shop offers applied, plus upsell performance counters.
+      if (quote.offers.length) {
+        await t.q('UPDATE public.orders SET offer_discount=$2, offer_snapshot=$3::jsonb WHERE id=$1', [order.id, quote.offerDiscount, JSON.stringify(quote.offers)]);
+        for (const o of quote.offers.filter(x => x.type === 'upsell')) {
+          await t.q('UPDATE public.store_upsell_offers SET conversions=conversions+1, revenue=revenue+$3 WHERE id=$1 AND store_id=$2', [o.id, p_store_id, quote.rows.filter(r => r.item?.upsell_offer_id === o.id).reduce((s, r) => s + major(r.lineMinor - r.offerMinor, p_currency), 0)]);
+        }
+      }
+
       if (quote.coupon) {
         await t.q('UPDATE public.coupons SET used_count = used_count + 1 WHERE id = $1', [quote.coupon.id]);
         await t.q(

@@ -68,6 +68,6 @@ export default {
         LEFT JOIN LATERAL (SELECT has_coupons FROM public.plan_limits WHERE plan_id=s.plan_id OR plan=s.subscription_plan ORDER BY (plan_id=s.plan_id) DESC LIMIT 1) pl ON true WHERE s.id=$1`,[p_store_id]);
       if (!ALL_PLANS_UNLOCKED && !plan?.allowed) throw badRequest('Coupon unavailable',{code:'COUPON_INVALID'});
     }
-    return {subtotal:quote.subtotal,discount:quote.discount,delivery:quote.delivery,total:quote.total,currency:p_currency,coupon_code:code || null};
+    return {subtotal:quote.subtotal,discount:quote.discount,offer_discount:quote.offerDiscount,offers:quote.offers,delivery:quote.delivery,total:quote.total,currency:p_currency,coupon_code:code || null};
   },
 };

@@ -25,6 +25,7 @@ import helpersRpc from './helpers.js';
 import couponsRpc from './coupons.js';
 import notificationsRpc from './notifications.js';
 import trackingRpc from './tracking.js';
+import sellMoreRpc from './sellMore.js';
 
 export const rpcRegistry = {
   ...authRpc,
@@ -43,6 +44,7 @@ export const rpcRegistry = {
   ...couponsRpc,
   ...notificationsRpc,
   ...trackingRpc,
+  ...sellMoreRpc,
 };
 
 export const rpcRouter = express.Router();

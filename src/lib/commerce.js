@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { badRequest, forbidden, ApiError } from './errors.js';
+import { applyOffers } from './offers.js';
 
 export function id(value) {
   if (typeof value !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)) throw badRequest('Invalid identifier');
@@ -84,7 +85,7 @@ export async function priceCheckout(db, storeId, items, currency, code = '', loc
   const stock = new Map();
   // Stable lock order avoids product deadlocks between competing baskets.
   for (const item of [...items].sort((a,b) => String(a.product_id).localeCompare(String(b.product_id)))) {
-    const product = await db.one(`SELECT id, name, price::text, delivery_fee::text, stock FROM public.products WHERE id=$1 AND store_id=$2${lock ? ' FOR UPDATE' : ''}`, [id(item.product_id),storeId]);
+    const product = await db.one(`SELECT id, name, category_id, price::text, delivery_fee::text, stock FROM public.products WHERE id=$1 AND store_id=$2${lock ? ' FOR UPDATE' : ''}`, [id(item.product_id),storeId]);
     if (!product) throw badRequest('Product unavailable');
     let bundle = null;
     if (item.bundle_id) {
@@ -101,24 +102,29 @@ export async function priceCheckout(db, storeId, items, currency, code = '', loc
     const required = (stock.get(product.id)?.required ?? 0) + qty;
     stock.set(product.id,{product,required});
     if (product.stock != null && product.stock < required) throw badRequest('Insufficient stock',{code:'OUT_OF_STOCK'});
-    rows.push({product,bundle,qty,count,unitPrice:major(bundle ? unitMinor / bundle.quantity : unitMinor,currency),bundlePrice:bundle ? major(unitMinor,currency) : null,lineMinor,deliveryMinor});
+    rows.push({item,product,bundle,qty,count,unitPrice:major(bundle ? unitMinor / bundle.quantity : unitMinor,currency),bundlePrice:bundle ? major(unitMinor,currency) : null,lineMinor,deliveryMinor});
   }
   const subtotal = rows.reduce((s,r)=>s+r.lineMinor,0);
   const delivery = rows.reduce((s,r)=>s+r.deliveryMinor,0);
+  // Shop offers (volume, gift boxes, buy X get Y, upsells) come before any coupon.
+  const offers = await applyOffers(db, storeId, rows, v => money(String(Number(v) || 0), currency));
+  const offerMinor = offers.discount;
   let coupon = null, discount = 0;
   if (code) {
     const matches = await db.q(`SELECT *, value::text,min_order_amount::text FROM public.coupons WHERE store_id=$1 AND upper(trim(code))=$2${lock ? ' FOR UPDATE' : ''}`,[storeId,couponCode(code)]);
     if (matches.length !== 1) throw badRequest('Coupon unavailable',{code:'COUPON_INVALID'});
     coupon = matches[0];
-    discount = discountFor(coupon,subtotal,currency);
+    discount = discountFor(coupon,subtotal-offerMinor,currency);
   }
   // Allocate rounding remainder to the last line, keeping sum(discounts) exact.
   let allocated = 0;
   rows.forEach((r,i)=>{
-    r.discountMinor = i === rows.length-1 ? discount-allocated : subtotal ? Number(BigInt(discount)*BigInt(r.lineMinor)/BigInt(subtotal)) : 0;
-    allocated += r.discountMinor;
+    const base = subtotal - offerMinor;
+    const couponPart = i === rows.length-1 ? discount-allocated : base ? Number(BigInt(discount)*BigInt(r.lineMinor-r.offerMinor)/BigInt(base)) : 0;
+    allocated += couponPart;
+    r.discountMinor = couponPart + r.offerMinor;
     r.lineTotal = major(r.lineMinor-r.discountMinor,currency);
     r.deliveryFee = major(r.deliveryMinor,currency);
   });
-  return {rows,stock,coupon,subtotal:major(subtotal,currency),discount:major(discount,currency),delivery:major(delivery,currency),total:major(subtotal-discount+delivery,currency),currency};
+  return {rows,stock,coupon,subtotal:major(subtotal,currency),discount:major(discount,currency),offerDiscount:major(offerMinor,currency),offers:offers.applied.map(o=>({...o,amount:major(o.amount,currency)})),delivery:major(delivery,currency),total:major(subtotal-offerMinor-discount+delivery,currency),currency};
 }

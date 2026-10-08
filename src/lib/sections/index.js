@@ -9,6 +9,7 @@ export const SECTION_TYPES = [
   'product_main', 'related_products', 'collection_grid', 'custom_code', 'contact_form',
   'hero_slider', 'social_icons', 'order_confirmation', 'order_summary', 'next_steps',
   'review_wall', 'faq_cards', 'cta_banner',
+  'product_reviews', 'photo_reviews', 'frequently_bought', 'upsell_products', 'volume_discount', 'gift_boxes', 'cart_reminder', 'thank_you_upsell',
 ];
 
 export const LIMITS = { maxPages: 25, maxSectionsPerPage: 40, maxBlocksPerSection: 12, maxBytes: 200 * 1024, maxString: 4000 };
