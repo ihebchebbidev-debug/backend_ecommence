@@ -309,7 +309,8 @@ export default {
       email: text(p_client?.email, 255),
       address: text(p_client?.address, 500),
       city: text(p_client?.city, 120),
-      region: text(p_client?.region, 120),
+      region: text(p_client?.region ?? p_client?.governorate, 120),
+      notes: text(p_client?.notes, 1000),
     };
     if (!Array.isArray(p_items) || p_items.length === 0) throw badRequest('La commande doit contenir au moins un article');
     // Bundle lines default to one bundle; legacy `quantity` there meant pieces.
@@ -361,8 +362,8 @@ export default {
            product_id, product_name, quantity, amount, delivery_fee, currency, status,
            bundle_id, bundle_name, bundle_label, bundle_price, bundle_quantity,
            payment_provider, address, city, region, merchandise_subtotal, discount_amount,
-           coupon_code, checkout_request_id, checkout_fingerprint, created_at, updated_at
-         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'pending',$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26, now(), now())
+           coupon_code, checkout_request_id, checkout_fingerprint, notes, created_at, updated_at
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'pending',$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27, now(), now())
          RETURNING id, order_number, amount`,
         [
           p_store_id, orderNumber, clientRow.id, client.name, client.phone, client.phone2,
@@ -372,6 +373,7 @@ export default {
           text(p_payment_provider || p_payment_method || '', 60),
           client.address, client.city, client.region,
           quote.subtotal, quote.discount, quote.coupon ? code : null, requestId, fingerprint,
+          client.notes,
         ],
       );
 
