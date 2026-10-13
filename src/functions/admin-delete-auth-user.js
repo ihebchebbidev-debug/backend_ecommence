@@ -1,6 +1,10 @@
 // Port of supabase/functions/admin-delete-auth-user/index.ts
 import { json, methodGuard } from './_shared/respond.js';
 
+// Keep in sync with FULL_SUPER_ADMIN_EMAILS in src/admin/permissions.ts.
+const FULL_ADMIN_EMAILS = (process.env.FULL_SUPER_ADMIN_EMAILS || 'douchd414@gmail.com,admin@e-commence.shop,admin@gmail.com')
+  .split(',').map((e) => e.trim().toLowerCase()).filter(Boolean);
+
 export default async function adminDeleteAuthUser(req, res, ctx) {
   if (methodGuard(req, res)) return;
 
@@ -12,7 +16,7 @@ export default async function adminDeleteAuthUser(req, res, ctx) {
       [ctx.userId],
     ).then((r) => r[0]);
 
-    if (!adminRole || adminRole.role !== 'super_admin' || adminRole.email !== 'douchd414@gmail.com') {
+    if (!adminRole || adminRole.role !== 'super_admin' || !FULL_ADMIN_EMAILS.includes(String(adminRole.email || '').toLowerCase())) {
       return json(res, { error: 'Unauthorized: super admin access required' }, 403);
     }
 

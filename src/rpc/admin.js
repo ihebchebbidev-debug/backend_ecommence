@@ -24,6 +24,17 @@ async function siblingStoreIds(ctx, userId, keepStoreId) {
   return rows.map((r) => r.id);
 }
 
+/** The store to keep: the given id, else the main admin's oldest shop, else the oldest shop. */
+async function resolveKeepStore(ctx, storeId) {
+  if (storeId) return ctx.one('SELECT id, store_name, user_id FROM public.platform_stores WHERE id = $1', [storeId]);
+  return ctx.one(
+    `SELECT s.id, s.store_name, s.user_id FROM public.platform_stores s
+     LEFT JOIN public.admin_roles a ON a.user_id = s.user_id AND a.role = 'super_admin'
+     WHERE s.deleted_at IS NULL
+     ORDER BY (a.user_id IS NULL), s.created_at ASC NULLS LAST LIMIT 1`,
+  );
+}
+
 export default {
   /** admin_store_ownership_diagnostic() → diagnostic rows across every store. */
   async admin_store_ownership_diagnostic(_args, ctx) {
@@ -60,9 +71,7 @@ export default {
   /** admin_cleanup_preview(p_keep_store_id) → counts of what would be deleted. */
   async admin_cleanup_preview({ p_keep_store_id }, ctx) {
     await requireSuperAdmin(ctx);
-    const keep = await ctx.one('SELECT id, store_name, user_id FROM public.platform_stores WHERE id = $1', [
-      p_keep_store_id,
-    ]);
+    const keep = await resolveKeepStore(ctx, p_keep_store_id);
     if (!keep) throw forbidden('Store not found');
 
     const siblingIds = await siblingStoreIds(ctx, keep.user_id, keep.id);
@@ -116,12 +125,10 @@ export default {
   /** admin_cleanup_keep_principal_store(p_keep_store_id, confirm_text, delete_orphan_data?) → deletion counts. */
   async admin_cleanup_keep_principal_store({ p_keep_store_id, confirm_text, delete_orphan_data }, ctx) {
     await requireSuperAdmin(ctx);
-    if (confirm_text !== 'DELETE') {
+    if (confirm_text !== 'DELETE' && confirm_text !== 'DELETE ALL STORES DATA') {
       throw forbidden('confirm_text must be "DELETE" to proceed');
     }
-    const keep = await ctx.one('SELECT id, store_name, user_id FROM public.platform_stores WHERE id = $1', [
-      p_keep_store_id,
-    ]);
+    const keep = await resolveKeepStore(ctx, p_keep_store_id);
     if (!keep) throw forbidden('Store not found');
 
     return ctx.tx(async (t) => {

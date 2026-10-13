@@ -69,6 +69,9 @@ authRouter.post(
     if (!password || String(password).length < 6)
       throw new ApiError(422, 'Password should be at least 6 characters', { code: 'weak_password' });
 
+    const reg = await one("SELECT value FROM public.platform_settings WHERE key = 'allow_registrations'").catch(() => null);
+    if (reg && String(reg.value) === 'false') throw new ApiError(403, 'Les nouvelles inscriptions sont désactivées', { code: 'signup_disabled' });
+
     const existing = await one('SELECT id FROM auth.users WHERE email = $1', [String(email).toLowerCase()]);
     if (existing) throw new ApiError(422, 'User already registered', { code: 'user_already_exists' });
 

@@ -89,6 +89,7 @@ export const policies = {
     publicRead: true,
     writeRoles: ['owner', 'admin'],
     hidden: ['internal_notes', 'quarantine_reason', 'remediation_action'],
+    adminVisible: ['internal_notes', 'quarantine_reason', 'remediation_action'],
   },
 
   // ── user-scoped ────────────────────────────────────────────────────

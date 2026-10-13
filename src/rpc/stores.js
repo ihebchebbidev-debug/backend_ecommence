@@ -11,6 +11,119 @@ function slugify(name) {
     .slice(0, 60) || 'store';
 }
 
+async function createStoreRecords(t, userId, input, storeName, slugBase) {
+  let slug = slugBase;
+  for (let i = 0; i < 5; i += 1) {
+    const clash = await t.one('SELECT 1 FROM public.platform_stores WHERE slug = $1', [slug]);
+    if (!clash) break;
+    slug = `${slugBase}-${Math.random().toString(36).slice(2, 6)}`;
+  }
+
+  const selectedPlan = String(input.selected_plan || input.plan_code || 'starter').toLowerCase();
+  const trialBalance = { starter: 5, pro: 20, business: 50, business_plus: 100 }[selectedPlan] || 5;
+  const trialDays = ['pro', 'business'].includes(selectedPlan) ? 10 : 0;
+  const subscriptionStatus = selectedPlan === 'business_plus' ? 'pending_contact' : trialDays > 0 ? 'trialing' : 'active';
+  const themeId = String(input.theme_id || 'oslo');
+  const primaryColor = String(input.primary_color || '#1E293B');
+  const secondaryColor = String(input.secondary_color || '#64748B');
+  const logoUrl = input.logo_url || null;
+  const subscriptionPlan = await t.one(
+    `SELECT id FROM public.subscription_plans
+      WHERE regexp_replace(lower(name), '[^a-z0-9]+', '_', 'g') = $1
+         OR regexp_replace(lower(name), '[^a-z0-9]+', '', 'g') = replace($1, '_', '')
+      ORDER BY is_active DESC, created_at ASC LIMIT 1`,
+    [selectedPlan],
+  );
+
+  const store = await t.one(
+    `INSERT INTO public.platform_stores
+       (store_name, slug, country, currency, user_id, subscription_plan, plan_id, status,
+        default_language, enabled_languages, store_color, logo_url, settings)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,'active','fr',ARRAY['ar','fr'],$8,$9,$10::jsonb)
+     RETURNING id, store_name, slug`,
+    [storeName, slug, input.country || 'TN', input.currency || 'TND', userId, selectedPlan, subscriptionPlan?.id || null, primaryColor, logoUrl,
+      JSON.stringify({
+        theme_id: themeId,
+        primary_color: primaryColor,
+        secondary_color: secondaryColor,
+        selected_plan: selectedPlan,
+        checkout: {
+          type: input.checkout_type || 'multi_step',
+          position: input.checkout_position || 'right',
+          require_phone: input.require_phone ?? true,
+          require_address: input.require_address ?? true,
+          require_email: input.require_email ?? false,
+          require_notes: input.require_notes ?? false,
+        },
+      })],
+  );
+
+  await t.q(
+    `INSERT INTO public.store_members (store_id,user_id,role,status,permissions,created_at,updated_at)
+     VALUES ($1,$2,'owner','active',$3::jsonb,now(),now())`,
+    [store.id, userId, JSON.stringify({ dashboard: true, orders: true, products: true, customers: true, settings: true, team: true })],
+  );
+  await t.q(
+    `INSERT INTO public.store_delivery_settings
+       (store_id,dispatch_mode,auto_send_after_confirmation,created_at,updated_at)
+     VALUES ($1,'popup',false,now(),now())`,
+    [store.id],
+  );
+  await t.q(
+    `INSERT INTO public.store_theme
+       (store_id,theme_id,primary_color,secondary_color,logo_url,created_at,updated_at)
+     VALUES ($1,$2,$3,$4,$5,now(),now())`,
+    [store.id, themeId, primaryColor, secondaryColor, logoUrl],
+  );
+  await t.q(
+    `INSERT INTO public.checkout_settings
+       (store_id,checkout_type,position,require_phone,require_address,require_email,require_notes,created_at,updated_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,now(),now())`,
+    [store.id, input.checkout_type || 'multi_step', input.checkout_position || 'right', input.require_phone ?? true, input.require_address ?? true, input.require_email ?? false, input.require_notes ?? false],
+  );
+
+  const answers = input.answers || {};
+  await t.q(
+    `INSERT INTO public.store_onboarding_answers
+       (store_id,sector,products_range,monthly_orders_range,team_size,main_objective,ecommerce_experience,
+        has_confirmation_team,needs_online_payment,needs_whatsapp_or_sms_otp,needs_marketing_support,
+        recommended_plan,selected_plan,created_at,updated_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,now(),now())`,
+    [store.id, answers.activity || null, answers.catalog_size || null, answers.monthly_orders || null,
+      answers.team_size || null, answers.main_goal || null, answers.experience || null,
+      input.hasConfirmationTeam ?? input.has_confirmation_team ?? null,
+      input.needsOnlinePayment ?? input.needs_online_payment ?? null,
+      input.needsWhatsappOrSmsOtp ?? input.needs_whatsapp_or_sms_otp ?? null,
+      input.needsMarketingSupport ?? input.needs_marketing_support ?? null,
+      input.recommended_plan || null, selectedPlan],
+  );
+  await t.q(
+    `INSERT INTO public.store_subscriptions
+       (store_id,user_id,plan_id,status,billing_cycle,started_at,trial_ends_at,current_period_end,trial_status,created_at,updated_at)
+     VALUES ($1,$2,$3,$4,'monthly',now(),
+             CASE WHEN $5 > 0 THEN now() + ($5 || ' days')::interval ELSE NULL END,
+             CASE WHEN $5 > 0 THEN (now() + ($5 || ' days')::interval)::text ELSE NULL END,
+             CASE WHEN $5 > 0 THEN 'active' ELSE NULL END,
+             now(),now())`,
+    [store.id, userId, subscriptionPlan?.id || null, subscriptionStatus, trialDays],
+  );
+  const wallet = await t.one(
+    `INSERT INTO public.store_wallets
+       (store_id,balance_usd,trial_balance_usd,trial_balance_expires_at,display_currency,
+        payment_currency,balance_tnd,currency_tnd,starter_order_fee_tnd,created_at,updated_at)
+     VALUES ($1,0,$2,CASE WHEN $3 > 0 THEN now() + ($3 || ' days')::interval ELSE NULL END,
+             'USD','TND',0,'TND',0.350,now(),now()) RETURNING id`,
+    [store.id, trialBalance, trialDays],
+  );
+  await t.q(
+    `INSERT INTO public.wallet_transactions
+       (store_id,wallet_id,user_id,type,amount,amount_usd,status,description,metadata,created_at)
+     VALUES ($1,$2,$3,'trial_credit',$4,$4,'completed','Crédit d''essai offert',$5::jsonb,now())`,
+    [store.id, wallet.id, userId, trialBalance, JSON.stringify({ selected_plan: selectedPlan, source: 'onboarding_trial_credit', currency: 'TND' })],
+  );
+  return store;
+}
+
 export default {
   /** get_accessible_stores() → stores the caller owns or is a member of. */
   async get_accessible_stores(_args, ctx) {
@@ -62,115 +175,7 @@ export default {
         }];
       }
 
-      let slug = slugBase;
-      for (let i = 0; i < 5; i += 1) {
-        const clash = await t.one('SELECT 1 FROM public.platform_stores WHERE slug = $1', [slug]);
-        if (!clash) break;
-        slug = `${slugBase}-${Math.random().toString(36).slice(2, 6)}`;
-      }
-
-      const selectedPlan = String(input.selected_plan || input.plan_code || 'starter').toLowerCase();
-      const trialBalance = { starter: 5, pro: 20, business: 50, business_plus: 100 }[selectedPlan] || 5;
-      const trialDays = ['pro', 'business'].includes(selectedPlan) ? 10 : 0;
-      const subscriptionStatus = selectedPlan === 'business_plus' ? 'pending_contact' : trialDays > 0 ? 'trialing' : 'active';
-      const themeId = String(input.theme_id || 'oslo');
-      const primaryColor = String(input.primary_color || '#1E293B');
-      const secondaryColor = String(input.secondary_color || '#64748B');
-      const logoUrl = input.logo_url || null;
-      const subscriptionPlan = await t.one(
-        `SELECT id FROM public.subscription_plans
-          WHERE regexp_replace(lower(name), '[^a-z0-9]+', '_', 'g') = $1
-             OR regexp_replace(lower(name), '[^a-z0-9]+', '', 'g') = replace($1, '_', '')
-          ORDER BY is_active DESC, created_at ASC LIMIT 1`,
-        [selectedPlan],
-      );
-
-      const store = await t.one(
-        `INSERT INTO public.platform_stores
-           (store_name, slug, country, currency, user_id, subscription_plan, plan_id, status,
-            default_language, enabled_languages, store_color, logo_url, settings)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,'active','fr',ARRAY['ar','fr'],$8,$9,$10::jsonb)
-         RETURNING id, store_name, slug`,
-        [storeName, slug, input.country || 'TN', input.currency || 'TND', userId, selectedPlan, subscriptionPlan?.id || null, primaryColor, logoUrl,
-          JSON.stringify({
-            theme_id: themeId,
-            primary_color: primaryColor,
-            secondary_color: secondaryColor,
-            selected_plan: selectedPlan,
-            checkout: {
-              type: input.checkout_type || 'multi_step',
-              position: input.checkout_position || 'right',
-              require_phone: input.require_phone ?? true,
-              require_address: input.require_address ?? true,
-              require_email: input.require_email ?? false,
-              require_notes: input.require_notes ?? false,
-            },
-          })],
-      );
-
-      await t.q(
-        `INSERT INTO public.store_members (store_id,user_id,role,status,permissions,created_at,updated_at)
-         VALUES ($1,$2,'owner','active',$3::jsonb,now(),now())`,
-        [store.id, userId, JSON.stringify({ dashboard: true, orders: true, products: true, customers: true, settings: true, team: true })],
-      );
-      await t.q(
-        `INSERT INTO public.store_delivery_settings
-           (store_id,dispatch_mode,auto_send_after_confirmation,created_at,updated_at)
-         VALUES ($1,'popup',false,now(),now())`,
-        [store.id],
-      );
-      await t.q(
-        `INSERT INTO public.store_theme
-           (store_id,theme_id,primary_color,secondary_color,logo_url,created_at,updated_at)
-         VALUES ($1,$2,$3,$4,$5,now(),now())`,
-        [store.id, themeId, primaryColor, secondaryColor, logoUrl],
-      );
-      await t.q(
-        `INSERT INTO public.checkout_settings
-           (store_id,checkout_type,position,require_phone,require_address,require_email,require_notes,created_at,updated_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,now(),now())`,
-        [store.id, input.checkout_type || 'multi_step', input.checkout_position || 'right', input.require_phone ?? true, input.require_address ?? true, input.require_email ?? false, input.require_notes ?? false],
-      );
-
-      const answers = input.answers || {};
-      await t.q(
-        `INSERT INTO public.store_onboarding_answers
-           (store_id,sector,products_range,monthly_orders_range,team_size,main_objective,ecommerce_experience,
-            has_confirmation_team,needs_online_payment,needs_whatsapp_or_sms_otp,needs_marketing_support,
-            recommended_plan,selected_plan,created_at,updated_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,now(),now())`,
-        [store.id, answers.activity || null, answers.catalog_size || null, answers.monthly_orders || null,
-          answers.team_size || null, answers.main_goal || null, answers.experience || null,
-          input.hasConfirmationTeam ?? input.has_confirmation_team ?? null,
-          input.needsOnlinePayment ?? input.needs_online_payment ?? null,
-          input.needsWhatsappOrSmsOtp ?? input.needs_whatsapp_or_sms_otp ?? null,
-          input.needsMarketingSupport ?? input.needs_marketing_support ?? null,
-          input.recommended_plan || null, selectedPlan],
-      );
-      await t.q(
-        `INSERT INTO public.store_subscriptions
-           (store_id,user_id,plan_id,status,billing_cycle,started_at,trial_ends_at,current_period_end,trial_status,created_at,updated_at)
-         VALUES ($1,$2,$3,$4,'monthly',now(),
-                 CASE WHEN $5 > 0 THEN now() + ($5 || ' days')::interval ELSE NULL END,
-                 CASE WHEN $5 > 0 THEN (now() + ($5 || ' days')::interval)::text ELSE NULL END,
-                 CASE WHEN $5 > 0 THEN 'active' ELSE NULL END,
-                 now(),now())`,
-        [store.id, userId, subscriptionPlan?.id || null, subscriptionStatus, trialDays],
-      );
-      const wallet = await t.one(
-        `INSERT INTO public.store_wallets
-           (store_id,balance_usd,trial_balance_usd,trial_balance_expires_at,display_currency,
-            payment_currency,balance_tnd,currency_tnd,starter_order_fee_tnd,created_at,updated_at)
-         VALUES ($1,0,$2,CASE WHEN $3 > 0 THEN now() + ($3 || ' days')::interval ELSE NULL END,
-                 'USD','TND',0,'TND',0.350,now(),now()) RETURNING id`,
-        [store.id, trialBalance, trialDays],
-      );
-      await t.q(
-        `INSERT INTO public.wallet_transactions
-           (store_id,wallet_id,user_id,type,amount,amount_usd,status,description,metadata,created_at)
-         VALUES ($1,$2,$3,'trial_credit',$4,$4,'completed','Crédit d''essai offert',$5::jsonb,now())`,
-        [store.id, wallet.id, userId, trialBalance, JSON.stringify({ selected_plan: selectedPlan, source: 'onboarding_trial_credit', currency: 'TND' })],
-      );
+      const store = await createStoreRecords(t, userId, input, storeName, slugBase);
       await t.q(
         `INSERT INTO public.onboarding_progress (user_id,current_step,completed,store_id,updated_at)
          VALUES ($1,'done',true,$2,now())
@@ -184,6 +189,19 @@ export default {
         created_store_name: store.store_name,
         created_store_slug: store.slug,
       }];
+    });
+  },
+
+  /** create_store_for_user(p_input) → an additional shop with the same complete setup as onboarding. */
+  async create_store_for_user({ p_input }, ctx) {
+    const userId = ctx.requireAuth() ?? ctx.userId;
+    if (!userId) throw badRequest('Authentification requise');
+    const input = p_input || {};
+    const storeName = String(input.store_name || '').trim().slice(0, 80);
+    if (storeName.length < 2) throw badRequest('Le nom doit contenir au moins 2 caractères');
+    return ctx.tx(async (t) => {
+      const store = await createStoreRecords(t, userId, input, storeName, slugify(storeName));
+      return [{ success: true, created_store_id: store.id, created_store_name: store.store_name, created_store_slug: store.slug }];
     });
   },
 

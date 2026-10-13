@@ -135,11 +135,15 @@ function requestedStoreId(query, col) {
   return eqValue(query[key]);
 }
 
-function stripHidden(rows, policy, ctx) {
+async function stripHidden(rows, policy, ctx) {
   if (ctx.isServiceRole || !policy.hidden?.length) return rows;
+  // Admin-only fields (e.g. internal notes) stay visible to super admins;
+  // credential material is never returned.
+  const adminSees = policy.adminVisible?.length && ctx.userId && (await ctx.isSuperAdmin()) ? policy.adminVisible : [];
+  const strip = policy.hidden.filter((c) => !adminSees.includes(c));
   return rows.map((row) => {
     const copy = { ...row };
-    for (const c of policy.hidden) delete copy[c];
+    for (const c of strip) delete copy[c];
     return copy;
   });
 }
@@ -274,7 +278,7 @@ restRouter.get(
 
     let rows = await withSelfHeal(table, null, () => ctx.q(sql, params));
     if (embeds.length) rows = await loadEmbeds(ctx, rows, embeds, table);
-    rows = stripHidden(rows, policy, ctx);
+    rows = await stripHidden(rows, policy, ctx);
 
     return respond(req, res, rows, { total, offset });
   }),
@@ -328,7 +332,7 @@ restRouter.post(
       rows = await emulateUpsert(ctx, table, rowsIn, String(onConflict).split(','), prefs.resolution);
     }
 
-    const inserted = stripHidden(rows, policy, ctx);
+    const inserted = await stripHidden(rows, policy, ctx);
     if (!prefs.representation) return res.status(201).set('Content-Range', '*/*').send('');
     return respond(req, res, inserted, { status: 201 });
   }),
@@ -397,7 +401,7 @@ restRouter.patch(
     const built = buildQuery(req.query, { params, extraWhere: scope.where });
     const sql = `UPDATE public.${ident(table)} SET ${sets.join(', ')}${built.where} RETURNING *`;
 
-    const updated = stripHidden(await withSelfHeal(table, patch, () => ctx.q(sql, params)), policy, ctx);
+    const updated = await stripHidden(await withSelfHeal(table, patch, () => ctx.q(sql, params)), policy, ctx);
     const prefs = preferences(req);
     if (!prefs.representation) return res.status(204).set('Content-Range', '*/*').send('');
     return respond(req, res, updated, { status: 200 });
@@ -417,7 +421,7 @@ restRouter.delete(
     const params = [...scope.params];
     const built = buildQuery(req.query, { params, extraWhere: scope.where });
     const sql = `DELETE FROM public.${ident(table)}${built.where} RETURNING *`;
-    const deleted = stripHidden(await ctx.q(sql, params), policy, ctx);
+    const deleted = await stripHidden(await ctx.q(sql, params), policy, ctx);
 
     const prefs = preferences(req);
     if (!prefs.representation) return res.status(204).set('Content-Range', '*/*').send('');
