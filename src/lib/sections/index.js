@@ -48,7 +48,7 @@ function cleanCodeSection(sec, raw) {
 
 // Shared "advanced" section settings: device visibility + anchor for #links.
 function cleanAdvanced(st) {
-  if (st._anchor != null) st._anchor = String(st._anchor).toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 40);
+  if (st._anchor != null) st._anchor = String(st._anchor).toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '').slice(0, 40);
   for (const k of ['_hide_mobile', '_hide_desktop']) if (k in st) st[k] = !!st[k];
   // Layout: spacing (px), content width, alignment, corner radius.
   const num = (k, min, max) => { if (k in st) { const n = Number(st[k]); st[k] = Number.isFinite(n) ? Math.min(max, Math.max(min, Math.round(n))) : 0; } };

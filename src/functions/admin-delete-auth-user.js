@@ -1,5 +1,6 @@
 // Port of supabase/functions/admin-delete-auth-user/index.ts
 import { json, methodGuard } from './_shared/respond.js';
+import adminRpc from '../rpc/admin.js';
 
 // Keep in sync with FULL_SUPER_ADMIN_EMAILS in src/admin/permissions.ts.
 const FULL_ADMIN_EMAILS = (process.env.FULL_SUPER_ADMIN_EMAILS || 'douchd414@gmail.com,admin@e-commence.shop,admin@gmail.com')
@@ -90,9 +91,10 @@ export default async function adminDeleteAuthUser(req, res, ctx) {
 
     let affectedStores = [];
     try {
-      affectedStores = await ctx.q(
-        `SELECT * FROM admin_cascade_soft_delete_user_stores($1, $2)`,
-        [target_user_id, ctx.userId],
+      // Implemented in the RPC layer (not a SQL function), so call it directly.
+      affectedStores = await adminRpc.admin_cascade_soft_delete_user_stores(
+        { p_target_user_id: target_user_id, p_performed_by: ctx.userId },
+        ctx,
       );
     } catch (e) {
       await ctx.q(

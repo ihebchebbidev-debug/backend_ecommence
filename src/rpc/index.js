@@ -26,6 +26,7 @@ import couponsRpc from './coupons.js';
 import notificationsRpc from './notifications.js';
 import trackingRpc from './tracking.js';
 import sellMoreRpc from './sellMore.js';
+import domainsRpc from './domains.js';
 
 export const rpcRegistry = {
   ...authRpc,
@@ -38,6 +39,7 @@ export const rpcRegistry = {
   ...paymentsRpc,
   ...storefrontRpc,
   ...builderRpc,
+  ...domainsRpc,
   ...billingRpc,
   ...adminRpc,
   ...helpersRpc,

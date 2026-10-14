@@ -50,6 +50,16 @@ export default {
     if (!(await ctx.canViewCustomerData(p_store_id))) throw badRequest('Accès aux données clients indisponible');
     return ctx.q('SELECT id, section_id, form_title, name, email, message, created_at FROM public.store_form_submissions WHERE store_id = $1 ORDER BY created_at DESC LIMIT 200', [p_store_id]);
   },
+  /** builder_delete_submissions(p_store_id, p_ids uuid[]) → { deleted } — staff remove test/spam entries of their own shop only. */
+  async builder_delete_submissions({ p_store_id, p_ids }, ctx) {
+    ctx.requireAuth();
+    await ctx.assertStoreAccess(p_store_id, DESIGN_ROLES);
+    if (!(await ctx.canViewCustomerData(p_store_id))) throw badRequest('Accès aux données clients indisponible');
+    const ids = Array.isArray(p_ids) ? p_ids.filter(x => typeof x === 'string' && /^[0-9a-f-]{36}$/i.test(x)).slice(0, 200) : [];
+    if (!ids.length) throw badRequest('Aucune entrée sélectionnée');
+    const res = await ctx.q('DELETE FROM public.store_form_submissions WHERE store_id = $1 AND id = ANY($2::uuid[]) RETURNING id', [p_store_id, ids]);
+    return { deleted: res.length };
+  },
   /** builder_get_draft(p_store_id) → { configuration, updated_at, published_at, has_published } */
   async builder_get_draft({ p_store_id }, ctx) {
     ctx.requireAuth();

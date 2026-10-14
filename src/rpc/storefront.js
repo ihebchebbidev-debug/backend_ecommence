@@ -13,7 +13,15 @@ export default {
   /** get_store_public_settings(p_store_id) → { key, value }[] */
   async get_store_public_settings({ p_store_id }, ctx) {
     if (!(await assertPublicStore(ctx, p_store_id))) return [];
-    return ctx.q('SELECT key, value FROM public.store_settings WHERE store_id = $1 ORDER BY key', [p_store_id]);
+    // Never expose credentials (e.g. meta_access_token) to anonymous visitors.
+    return ctx.q(
+      `SELECT key, value FROM public.store_settings
+        WHERE store_id = $1
+          AND key NOT ILIKE '%token%' AND key NOT ILIKE '%secret%'
+          AND key NOT ILIKE '%password%' AND key NOT ILIKE '%api_key%'
+        ORDER BY key`,
+      [p_store_id],
+    );
   },
 
   /** get_store_public_pixels(p_store_id) → { key, value }[] */
