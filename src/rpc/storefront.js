@@ -21,7 +21,8 @@ export default {
     if (!(await assertPublicStore(ctx, p_store_id))) return [];
     return ctx.q(
       `SELECT key, value FROM public.store_settings
-        WHERE store_id = $1 AND key ILIKE 'pixel_%'
+        WHERE store_id = $1
+          AND key IN ('meta_pixel_id','tiktok_pixel_id','snapchat_pixel_id','ga4_id')
         ORDER BY key`,
       [p_store_id],
     );
