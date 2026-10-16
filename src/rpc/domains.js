@@ -28,6 +28,8 @@ export async function checkDomainDns(domain, id) {
 /** Activates the request and links it to the shop; retires the shop's previous active domain. */
 async function activate(t, storeId, id, domain) {
   await t.q(`UPDATE public.store_domain_requests SET status = 'active', updated_at = now() WHERE id = $1`, [id]);
+  // A domain serves exactly one shop: clear any stale link on another shop before linking this one.
+  await t.q('UPDATE public.platform_stores SET store_domain = NULL WHERE id <> $1 AND lower(store_domain) = lower($2)', [storeId, domain]);
   await t.q('UPDATE public.platform_stores SET store_domain = $2 WHERE id = $1', [storeId, domain]);
   await t.q(
     `UPDATE public.store_domain_requests SET status = 'cancelled', admin_note = coalesce(admin_note, 'Remplacé par ' || $3), updated_at = now()
@@ -70,6 +72,14 @@ export const normalizeDomain = (v) => String(v || '').trim().toLowerCase()
 async function requireSuperAdmin(ctx) {
   ctx.requireAuth();
   if (!(await ctx.isSuperAdmin())) throw forbidden('Super admin access required');
+}
+
+/** Two shops racing for one domain hit the open-domain unique index: report it plainly. */
+export async function claimOnce(work) {
+  try { return await work(); } catch (e) {
+    if (e?.code === '23505') throw badRequest('Ce domaine est déjà relié à une autre boutique');
+    throw e;
+  }
 }
 
 const COLS = 'id, store_id, domain, availability, already_owned, contact_email, contact_phone, business_name, notes, status, admin_note, created_at, updated_at';
@@ -127,7 +137,7 @@ const domainRpc = {
     const domain = normalizeDomain(p_domain);
     if (!validSellerDomain(domain)) throw badRequest('Nom de domaine invalide');
     const email = (await ctx.profile())?.email || 'unknown@e-commence.shop';
-    return ctx.tx(async (t) => {
+    return claimOnce(() => ctx.tx(async (t) => {
     await lockStore(t, p_store_id);
     await auditActor(t, ctx);
     const taken = await t.q(`SELECT store_id FROM public.store_domain_requests WHERE lower(domain) = $1 AND status IN ('pending','in_progress','active')`, [domain]);
@@ -139,7 +149,7 @@ const domainRpc = {
       `INSERT INTO public.store_domain_requests (store_id, requested_by, domain, availability, already_owned, contact_email, status)
        VALUES ($1,$2,$3,'taken',true,$4,'pending')`, [p_store_id, ctx.userId, domain, String(email).slice(0, 200)]);
     return null;
-    });
+    }));
   },
 
   /** domain_verify(p_store_id, p_id) → { ok, root, www } — checks DNS and activates the domain when it points here. */
