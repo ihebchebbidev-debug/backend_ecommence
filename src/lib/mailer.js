@@ -11,6 +11,7 @@
 // rather than silently swallowing a password-reset request.
 import { config, emailConfigured } from '../config.js';
 import { createLogger } from './logger.js';
+import { getMessagingSettings, smtpReady, sendSmtp } from './messaging.js';
 
 const log = createLogger('mail');
 
@@ -50,6 +51,9 @@ export async function sendMail({ to, subject, html, text }) {
   if (!to) throw new Error('sendMail: "to" is required');
   const plain = text || String(html || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
 
+  // Admin-configured SMTP (GoDaddy, OVH, …) takes priority over env providers.
+  const ms = await getMessagingSettings();
+  if (smtpReady(ms)) return sendSmtp(ms, { to, subject, html, text: plain });
   if (config.email.resendApiKey) return sendViaResend({ to, subject, html, text: plain });
   if (config.email.webhookUrl) return sendViaWebhook({ to, subject, html, text: plain });
 
@@ -79,3 +83,17 @@ export const confirmationEmail = (link) => ({
   subject: 'Confirm your email address',
   html: shell('Confirm your email', 'Click the button below to confirm your email address and activate your account.', 'Confirm email', link),
 });
+
+export const otpEmail = (code, purpose) => {
+  const what = { signup: 'confirmer votre inscription', signin: 'vous connecter', reset: 'réinitialiser votre mot de passe' }[purpose] || 'continuer';
+  return {
+    subject: `Votre code de vérification : ${code}`,
+    html: `
+  <div style="font-family:system-ui,-apple-system,Segoe UI,sans-serif;max-width:520px;margin:0 auto;padding:24px">
+    <h2 style="margin:0 0 12px">Code de vérification</h2>
+    <p style="margin:0 0 20px;line-height:1.5">Utilisez ce code pour ${what}. Il expire dans 10 minutes.</p>
+    <p style="margin:0 0 24px;font-size:32px;letter-spacing:8px;font-weight:700">${code}</p>
+    <p style="margin:0;font-size:12px;color:#666">Si vous n'êtes pas à l'origine de cette demande, ignorez cet email.</p>
+  </div>`,
+  };
+};

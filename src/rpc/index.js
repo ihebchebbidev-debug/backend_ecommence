@@ -27,6 +27,7 @@ import notificationsRpc from './notifications.js';
 import trackingRpc from './tracking.js';
 import sellMoreRpc from './sellMore.js';
 import domainsRpc from './domains.js';
+import messagingRpc from './messaging.js';
 
 export const rpcRegistry = {
   ...authRpc,
@@ -47,6 +48,7 @@ export const rpcRegistry = {
   ...notificationsRpc,
   ...trackingRpc,
   ...sellMoreRpc,
+  ...messagingRpc,
 };
 
 export const rpcRouter = express.Router();

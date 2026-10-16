@@ -9,6 +9,7 @@ import { config } from '../config.js';
 import { signAccessToken } from '../lib/jwt.js';
 import { asyncHandler, ApiError, badRequest, unauthorized } from '../lib/errors.js';
 import { sendMail, recoveryEmail, confirmationEmail } from '../lib/mailer.js';
+import { otpRequirements, issueOtp, verifyOtp, pickChannel, normalizePhone, mask, assertPurpose } from './otp.js';
 
 export const authRouter = express.Router();
 
@@ -60,11 +61,88 @@ async function currentUser(req) {
   return u;
 }
 
+
+async function checkPassword(email, password) {
+  const user = await one('SELECT * FROM auth.users WHERE email = $1 AND deleted_at IS NULL', [
+    String(email || '').toLowerCase(),
+  ]);
+  const ok = user?.encrypted_password && (await bcrypt.compare(String(password || ''), user.encrypted_password));
+  if (!ok) throw new ApiError(400, 'Invalid login credentials', { code: 'invalid_credentials' });
+  if (user.banned_until && new Date(user.banned_until) > new Date())
+    throw new ApiError(403, 'User is banned', { code: 'user_banned' });
+  const profile = await one('SELECT status, deleted_at FROM public.profiles WHERE id = $1', [user.id]);
+  if (profile?.deleted_at || profile?.status === 'deleted')
+    throw new ApiError(403, 'Compte supprimé', { code: 'user_deleted' });
+  return user;
+}
+
+// ── Verification codes ───────────────────────────────────────────────
+authRouter.get('/otp/settings', asyncHandler(async (_req, res) => res.json(await otpRequirements())));
+
+authRouter.post(
+  '/otp/send',
+  asyncHandler(async (req, res) => {
+    const { purpose, channel, email, phone, password } = req.body || {};
+    assertPurpose(purpose);
+    const ip = req.ctx?.requestIp || req.ip;
+    if (purpose === 'signup') {
+      if (channel === 'sms') {
+        const target = normalizePhone(phone);
+        if (!target) throw new ApiError(422, 'Numéro de téléphone invalide', { code: 'phone_invalid' });
+        return res.json({ channel, destination: mask('sms', target), ...(await issueOtp({ purpose, channel, target, ip })) });
+      }
+      const target = String(email || '').toLowerCase().trim();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(target)) throw new ApiError(422, 'Email invalide', { code: 'email_invalid' });
+      return res.json({ channel: 'email', destination: mask('email', target), ...(await issueOtp({ purpose, channel: 'email', target, ip })) });
+    }
+    if (purpose === 'signin') {
+      const user = await checkPassword(email, password);
+      const pick = await pickChannel('signin', user);
+      if (!pick) return res.json({ channel: null });
+      return res.json({ channel: pick.channel, destination: mask(pick.channel, pick.target), ...(await issueOtp({ purpose, ...pick, ip })) });
+    }
+    // reset — never reveal whether the account exists.
+    const user = await one('SELECT * FROM auth.users WHERE email = $1 AND deleted_at IS NULL', [String(email || '').toLowerCase()]);
+    const pick = user ? await pickChannel('reset', user) : null;
+    if (!pick) return res.json({ channel: 'email', destination: mask('email', String(email || '').toLowerCase()) });
+    return res.json({ channel: pick.channel, destination: mask(pick.channel, pick.target), ...(await issueOtp({ purpose, ...pick, ip })) });
+  }),
+);
+
+authRouter.post(
+  '/otp/signin',
+  asyncHandler(async (req, res) => {
+    const { email, password, code } = req.body || {};
+    const user = await checkPassword(email, password);
+    const pick = await pickChannel('signin', user);
+    if (pick) await verifyOtp({ purpose: 'signin', ...pick, code });
+    return res.json(await newSession(user, req));
+  }),
+);
+
+authRouter.post(
+  '/otp/reset',
+  asyncHandler(async (req, res) => {
+    const { email, code, password } = req.body || {};
+    if (!password || String(password).length < 6)
+      throw new ApiError(422, 'Password should be at least 6 characters', { code: 'weak_password' });
+    const user = await one('SELECT * FROM auth.users WHERE email = $1 AND deleted_at IS NULL', [String(email || '').toLowerCase()]);
+    const pick = user ? await pickChannel('reset', user) : null;
+    if (!pick) throw new ApiError(400, 'Code invalide ou expiré', { code: 'otp_invalid' });
+    await verifyOtp({ purpose: 'reset', ...pick, code });
+    const updated = await one(
+      'UPDATE auth.users SET encrypted_password = $1, recovery_token = NULL, updated_at = now() WHERE id = $2 RETURNING *',
+      [await bcrypt.hash(String(password), 10), user.id],
+    );
+    return res.json(await newSession(updated, req));
+  }),
+);
+
 // ── POST /auth/v1/signup ─────────────────────────────────────────────
 authRouter.post(
   '/signup',
   asyncHandler(async (req, res) => {
-    const { email, password, data = {}, phone } = req.body || {};
+    let { email, password, data = {}, phone } = req.body || {};
     if (!email && !phone) throw badRequest('Email or phone is required', { code: 'validation_failed' });
     if (!password || String(password).length < 6)
       throw new ApiError(422, 'Password should be at least 6 characters', { code: 'weak_password' });
@@ -74,6 +152,18 @@ authRouter.post(
 
     const existing = await one('SELECT id FROM auth.users WHERE email = $1', [String(email).toLowerCase()]);
     if (existing) throw new ApiError(422, 'User already registered', { code: 'user_already_exists' });
+
+    // Verification codes required by the admin (sent earlier via /otp/send).
+    const { email_otp: emailOtp, phone_otp: phoneOtp, ...cleanData } = data || {};
+    data = cleanData;
+    const need = (await otpRequirements()).signup;
+    let verifiedPhone = null;
+    if (need.email) await verifyOtp({ purpose: 'signup', channel: 'email', target: String(email).toLowerCase(), code: emailOtp });
+    if (need.sms) {
+      verifiedPhone = normalizePhone(phone || data.phone);
+      if (!verifiedPhone) throw new ApiError(422, 'Numéro de téléphone requis', { code: 'phone_required' });
+      await verifyOtp({ purpose: 'signup', channel: 'sms', target: verifiedPhone, code: phoneOtp });
+    }
 
     const hash = await bcrypt.hash(String(password), 10);
     const user = await one(
@@ -88,6 +178,10 @@ authRouter.post(
        VALUES ($1, $2, $3, $4, 'active') ON CONFLICT (id) DO NOTHING`,
       [user.id, user.email, data.full_name || null, data.country || null],
     );
+    if (verifiedPhone) {
+      await q('UPDATE auth.users SET phone = $1, phone_confirmed_at = now() WHERE id = $2', [verifiedPhone, user.id]);
+      await q('UPDATE public.profiles SET phone_verified = true, phone_verified_at = now() WHERE id = $1', [user.id]).catch(() => {});
+    }
 
     // GoTrue with autoconfirm returns the token response FLAT (access_token,
     // refresh_token, user, …). supabase-js only recognises a session when
@@ -105,18 +199,9 @@ authRouter.post(
 
     if (grant === 'password') {
       const { email, password } = req.body || {};
-      const user = await one('SELECT * FROM auth.users WHERE email = $1 AND deleted_at IS NULL', [
-        String(email || '').toLowerCase(),
-      ]);
-      const ok = user?.encrypted_password && (await bcrypt.compare(String(password || ''), user.encrypted_password));
-      if (!ok) throw new ApiError(400, 'Invalid login credentials', { code: 'invalid_credentials' });
-      if (user.banned_until && new Date(user.banned_until) > new Date())
-        throw new ApiError(403, 'User is banned', { code: 'user_banned' });
-
-      const profile = await one('SELECT status, deleted_at FROM public.profiles WHERE id = $1', [user.id]);
-      if (profile?.deleted_at || profile?.status === 'deleted')
-        throw new ApiError(403, 'Compte supprimé', { code: 'user_deleted' });
-
+      const user = await checkPassword(email, password);
+      // Admin requires a sign-in code: the client calls /otp/send + /otp/signin.
+      if (await pickChannel('signin', user)) throw new ApiError(400, 'OTP_REQUIRED', { code: 'otp_required' });
       return res.json(await newSession(user, req));
     }
 

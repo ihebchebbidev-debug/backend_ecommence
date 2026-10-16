@@ -125,6 +125,8 @@ export const policies = {
 
   // ── never over REST ────────────────────────────────────────────────
   phone_otp_codes: denied(),
+  platform_messaging_settings: denied(),
+  auth_otp_codes: denied(),
 };
 
 export function policyFor(table) {

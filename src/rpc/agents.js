@@ -14,17 +14,28 @@ async function loadSession(ctx, sessionId) {
   return session;
 }
 
-function hasPermission(session, permission) {
+// Legacy flat permission names → seller-app section keys ({ commandes: { read, modify } }).
+const LEGACY = { update_orders: ['commandes', 'modify'] };
+
+/** Accepts the seller-app shape `{ section: { read, create, modify, delete } }`, legacy flat flags, or arrays. */
+function hasPermission(session, permission, action = 'read') {
   const perms = session.permissions;
   if (!perms) return session.member_role === 'admin' || session.member_role === 'owner';
   if (Array.isArray(perms)) return perms.includes(permission);
-  return perms[permission] === true;
+  if (perms[permission] === true) return true;
+  const [key, act] = LEGACY[permission] || [permission, action];
+  return perms[key]?.[act] === true;
+}
+
+function need(session, key, action = 'read') {
+  if (!hasPermission(session, key, action)) throw forbidden('Insufficient permissions');
 }
 
 export default {
   async agent_get_orders(args, ctx) {
     const { p_session_id, p_status = null, p_search = null, p_limit = 50, p_offset = 0 } = args;
     const session = await loadSession(ctx, p_session_id);
+    need(session, 'commandes');
 
     const conds = ['store_id = $1', 'deleted_at IS NULL'];
     const params = [session.store_id];
@@ -55,6 +66,7 @@ export default {
 
   async agent_get_products({ p_session_id, p_search = null }, ctx) {
     const session = await loadSession(ctx, p_session_id);
+    need(session, 'produits');
     const conds = ['store_id = $1'];
     const params = [session.store_id];
     if (p_search) {
@@ -71,7 +83,7 @@ export default {
 
   async agent_update_order({ p_session_id, p_order_id, p_status, p_notes = null }, ctx) {
     const session = await loadSession(ctx, p_session_id);
-    if (!hasPermission(session, 'update_orders')) throw forbidden('Insufficient permissions');
+    need(session, 'update_orders');
 
     const order = await ctx.one('SELECT id FROM public.orders WHERE id = $1 AND store_id = $2', [
       p_order_id,
@@ -124,6 +136,7 @@ export default {
 
   async team_get_members({ p_session_id }, ctx) {
     const session = await loadSession(ctx, p_session_id);
+    need(session, 'personnel');
     return ctx.q(
       `SELECT id, name, first_name, last_name, role, status, online, available
        FROM public.team_members WHERE store_id = $1`,
@@ -133,6 +146,7 @@ export default {
 
   async team_get_products({ p_session_id, p_search = null, p_limit = 50, p_offset = 0 }, ctx) {
     const session = await loadSession(ctx, p_session_id);
+    need(session, 'produits');
     const conds = ['store_id = $1'];
     const params = [session.store_id];
     if (p_search) {

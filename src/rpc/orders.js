@@ -329,6 +329,18 @@ export default {
         }
       }
 
+      // Shop protection: refuse orders from this shop's blocked phones / IPs (digits-only phone match).
+      const phoneDigits = String(client.phone || '').replace(/\D/g, '').slice(-8);
+      const blocked = await t.one(
+        `SELECT EXISTS (SELECT 1 FROM public.phone_blacklist WHERE store_id = $1 AND $2 <> '' AND right(regexp_replace(phone, '\\D', '', 'g'), 8) = $2)
+             OR EXISTS (SELECT 1 FROM public.ip_blacklist WHERE store_id = $1 AND $3::text IS NOT NULL AND trim(ip_address) = $3) AS hit`,
+        [p_store_id, phoneDigits, ctx.requestIp ? String(ctx.requestIp).replace(/^::ffff:/, '') : null],
+      );
+      if (blocked?.hit) {
+        if (ctx.requestIp) await t.q('UPDATE public.ip_blacklist SET blocked_orders = coalesce(blocked_orders,0) + 1 WHERE store_id = $1 AND trim(ip_address) = $2', [p_store_id, String(ctx.requestIp).replace(/^::ffff:/, '')]);
+        throw forbidden('Commande impossible depuis ce numéro ou cet appareil', { code: 'ORDER_BLOCKED' });
+      }
+
       const quote = await priceCheckout(t, p_store_id, items, p_currency, code, true);
       if (code) {
         const plan = await t.one(`SELECT coalesce(o.is_enabled,pl.has_coupons,false) AS allowed FROM public.platform_stores s
