@@ -1,0 +1,1664 @@
+[
+  {
+    "country": "TN",
+    "is_active": true,
+    "is_visible_to_stores": true,
+    "integration_mode": "api",
+    "supports_cod": true,
+    "supports_return": false,
+    "supports_webhook": false,
+    "supports_open_package": true,
+    "code": "first_delivery",
+    "name": "First Delivery",
+    "description": "Livraison en 24h partout en Tunisie, paiement à la livraison.",
+    "supports_tracking": true,
+    "supports_label": true,
+    "base_url": "https://www.firstdeliverygroup.com/api/v2",
+    "auth_type": "bearer_token",
+    "auth_header_name": "Authorization",
+    "create_shipment_endpoint": "/create",
+    "track_shipment_endpoint": "/etat",
+    "cancel_shipment_endpoint": "/bulk-cancellation",
+    "label_endpoint": "",
+    "credentials_schema": {
+      "fields": [
+        {
+          "key": "api_token",
+          "label_fr": "Clé First Delivery",
+          "label_en": "First Delivery key",
+          "label_ar": "مفتاح First Delivery",
+          "type": "password",
+          "required": true,
+          "help_fr": "Espace client First Delivery → API",
+          "help_en": "First Delivery client area → API",
+          "help_ar": "فضاء الحريف First Delivery ← API"
+        }
+      ]
+    },
+    "sender_schema": {
+      "fields": [
+        {
+          "key": "sender_name",
+          "label_fr": "Nom de la boutique (étiquette)",
+          "label_en": "Store name (label)",
+          "label_ar": "اسم المتجر (الملصق)",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "sender_phone",
+          "label_fr": "Téléphone de la boutique",
+          "label_en": "Store phone",
+          "label_ar": "هاتف المتجر",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "sender_address",
+          "label_fr": "Adresse d’enlèvement",
+          "label_en": "Pickup address",
+          "label_ar": "عنوان الاستلام",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "sender_gouvernorat",
+          "label_fr": "Gouvernorat d’enlèvement",
+          "label_en": "Pickup governorate",
+          "label_ar": "ولاية الاستلام",
+          "type": "select",
+          "required": true,
+          "options": [
+            {
+              "value": "Ariana",
+              "label_fr": "Ariana",
+              "label_ar": "أريانة"
+            },
+            {
+              "value": "Béja",
+              "label_fr": "Béja",
+              "label_ar": "باجة"
+            },
+            {
+              "value": "Ben Arous",
+              "label_fr": "Ben Arous",
+              "label_ar": "بن عروس"
+            },
+            {
+              "value": "Bizerte",
+              "label_fr": "Bizerte",
+              "label_ar": "بنزرت"
+            },
+            {
+              "value": "Gabès",
+              "label_fr": "Gabès",
+              "label_ar": "قابس"
+            },
+            {
+              "value": "Gafsa",
+              "label_fr": "Gafsa",
+              "label_ar": "قفصة"
+            },
+            {
+              "value": "Jendouba",
+              "label_fr": "Jendouba",
+              "label_ar": "جندوبة"
+            },
+            {
+              "value": "Kairouan",
+              "label_fr": "Kairouan",
+              "label_ar": "القيروان"
+            },
+            {
+              "value": "Kasserine",
+              "label_fr": "Kasserine",
+              "label_ar": "القصرين"
+            },
+            {
+              "value": "Kébili",
+              "label_fr": "Kébili",
+              "label_ar": "قبلي"
+            },
+            {
+              "value": "Le Kef",
+              "label_fr": "Le Kef",
+              "label_ar": "الكاف"
+            },
+            {
+              "value": "Mahdia",
+              "label_fr": "Mahdia",
+              "label_ar": "المهدية"
+            },
+            {
+              "value": "Manouba",
+              "label_fr": "Manouba",
+              "label_ar": "منوبة"
+            },
+            {
+              "value": "Médenine",
+              "label_fr": "Médenine",
+              "label_ar": "مدنين"
+            },
+            {
+              "value": "Monastir",
+              "label_fr": "Monastir",
+              "label_ar": "المنستير"
+            },
+            {
+              "value": "Nabeul",
+              "label_fr": "Nabeul",
+              "label_ar": "نابل"
+            },
+            {
+              "value": "Sfax",
+              "label_fr": "Sfax",
+              "label_ar": "صفاقس"
+            },
+            {
+              "value": "Sidi Bouzid",
+              "label_fr": "Sidi Bouzid",
+              "label_ar": "سيدي بوزيد"
+            },
+            {
+              "value": "Siliana",
+              "label_fr": "Siliana",
+              "label_ar": "سليانة"
+            },
+            {
+              "value": "Sousse",
+              "label_fr": "Sousse",
+              "label_ar": "سوسة"
+            },
+            {
+              "value": "Tataouine",
+              "label_fr": "Tataouine",
+              "label_ar": "تطاوين"
+            },
+            {
+              "value": "Tozeur",
+              "label_fr": "Tozeur",
+              "label_ar": "توزر"
+            },
+            {
+              "value": "Tunis",
+              "label_fr": "Tunis",
+              "label_ar": "تونس"
+            },
+            {
+              "value": "Zaghouan",
+              "label_fr": "Zaghouan",
+              "label_ar": "زغوان"
+            }
+          ]
+        },
+        {
+          "key": "vat_number",
+          "label_fr": "Matricule fiscal",
+          "label_en": "VAT number",
+          "label_ar": "المعرف الجبائي",
+          "type": "text",
+          "required": false
+        },
+        {
+          "key": "open_package",
+          "label_fr": "Autoriser l’ouverture du colis",
+          "label_en": "Allow opening the parcel",
+          "label_ar": "السماح بفتح الطرد",
+          "type": "select",
+          "required": false,
+          "options": [
+            {
+              "value": "oui",
+              "label_fr": "Oui",
+              "label_en": "Yes",
+              "label_ar": "نعم"
+            },
+            {
+              "value": "non",
+              "label_fr": "Non",
+              "label_en": "No",
+              "label_ar": "لا"
+            }
+          ]
+        },
+        {
+          "key": "fragile",
+          "label_fr": "Fragile",
+          "label_en": "Fragile",
+          "label_ar": "قابل للكسر",
+          "type": "select",
+          "required": false,
+          "options": [
+            {
+              "value": "oui",
+              "label_fr": "Oui",
+              "label_en": "Yes",
+              "label_ar": "نعم"
+            },
+            {
+              "value": "non",
+              "label_fr": "Non",
+              "label_en": "No",
+              "label_ar": "لا"
+            }
+          ]
+        }
+      ]
+    },
+    "settings_schema": {
+      "fields": []
+    },
+    "create_shipment_payload_template": {
+      "Client": {
+        "nom": "{{order.client_name}}",
+        "locality_id": "{{order.locality_id}}",
+        "gouvernerat": "{{order.region}}",
+        "ville": "{{order.city}}",
+        "adresse": "{{order.address}}",
+        "telephone": "{{order.client_phone}}",
+        "telephone2": "{{order.client_phone2}}"
+      },
+      "Produit": {
+        "prix": "{{order.amount}}",
+        "designation": "{{order.product_name}}",
+        "nombreArticle": "{{order.quantity}}",
+        "commentaire": "{{order.notes}}",
+        "article": "{{order.product_name}}",
+        "nombreEchange": 0,
+        "estFragile": "{{sender.fragile}}",
+        "ouvrirColis": "{{sender.open_package}}"
+      }
+    },
+    "tracking_payload_template": {
+      "barCode": "{{shipment.tracking_number}}"
+    },
+    "response_mapping": {
+      "tracking_number": "result.barCode",
+      "label_url": "result.link",
+      "status": "result.state"
+    },
+    "status_mapping": {
+      "en attente": "created",
+      "en cours": "in_transit",
+      "au magasin": "in_transit",
+      "livré": "delivered",
+      "echange": "delivered",
+      "retour expéditeur": "returned",
+      "rtn définitif": "returned",
+      "retour reçu": "returned",
+      "supprimé": "cancelled"
+    },
+    "sort_order": 10
+  },
+  {
+    "country": "TN",
+    "is_active": true,
+    "is_visible_to_stores": true,
+    "integration_mode": "api",
+    "supports_cod": true,
+    "supports_return": false,
+    "supports_webhook": false,
+    "supports_open_package": false,
+    "code": "aramex",
+    "name": "Aramex",
+    "description": "Livraison nationale et internationale avec contre-remboursement.",
+    "supports_tracking": true,
+    "supports_label": true,
+    "base_url": "https://ws.aramex.net/ShippingAPI.V2/Shipping/Service_1_0.svc/json",
+    "auth_type": "none",
+    "auth_header_name": "",
+    "create_shipment_endpoint": "/CreateShipments",
+    "track_shipment_endpoint": "https://ws.aramex.net/ShippingAPI.V2/Tracking/Service_1_0.svc/json/TrackShipments",
+    "cancel_shipment_endpoint": "",
+    "label_endpoint": "",
+    "credentials_schema": {
+      "fields": [
+        {
+          "key": "username",
+          "label_fr": "Utilisateur Aramex",
+          "label_en": "Aramex username",
+          "label_ar": "اسم مستخدم Aramex",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "password",
+          "label_fr": "Mot de passe",
+          "label_en": "Password",
+          "label_ar": "كلمة المرور",
+          "type": "password",
+          "required": true
+        },
+        {
+          "key": "account_number",
+          "label_fr": "Numéro de compte",
+          "label_en": "Account number",
+          "label_ar": "رقم الحساب",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "account_pin",
+          "label_fr": "PIN du compte",
+          "label_en": "Account PIN",
+          "label_ar": "الرقم السري للحساب",
+          "type": "password",
+          "required": true
+        },
+        {
+          "key": "account_entity",
+          "label_fr": "Entité (TUN)",
+          "label_en": "Entity (TUN)",
+          "label_ar": "الكيان (TUN)",
+          "type": "text",
+          "required": true,
+          "help_fr": "Laissez TUN pour Aramex Tunisie",
+          "help_en": "Keep TUN for Aramex Tunisia",
+          "help_ar": "اترك TUN لأرامكس تونس"
+        },
+        {
+          "key": "account_country",
+          "label_fr": "Pays du compte (TN)",
+          "label_en": "Account country (TN)",
+          "label_ar": "بلد الحساب (TN)",
+          "type": "text",
+          "required": true
+        }
+      ]
+    },
+    "sender_schema": {
+      "fields": [
+        {
+          "key": "sender_name",
+          "label_fr": "Nom de la boutique (étiquette)",
+          "label_en": "Store name (label)",
+          "label_ar": "اسم المتجر (الملصق)",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "sender_phone",
+          "label_fr": "Téléphone de la boutique",
+          "label_en": "Store phone",
+          "label_ar": "هاتف المتجر",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "sender_address",
+          "label_fr": "Adresse d’enlèvement",
+          "label_en": "Pickup address",
+          "label_ar": "عنوان الاستلام",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "sender_gouvernorat",
+          "label_fr": "Gouvernorat d’enlèvement",
+          "label_en": "Pickup governorate",
+          "label_ar": "ولاية الاستلام",
+          "type": "select",
+          "required": true,
+          "options": [
+            {
+              "value": "Ariana",
+              "label_fr": "Ariana",
+              "label_ar": "أريانة"
+            },
+            {
+              "value": "Béja",
+              "label_fr": "Béja",
+              "label_ar": "باجة"
+            },
+            {
+              "value": "Ben Arous",
+              "label_fr": "Ben Arous",
+              "label_ar": "بن عروس"
+            },
+            {
+              "value": "Bizerte",
+              "label_fr": "Bizerte",
+              "label_ar": "بنزرت"
+            },
+            {
+              "value": "Gabès",
+              "label_fr": "Gabès",
+              "label_ar": "قابس"
+            },
+            {
+              "value": "Gafsa",
+              "label_fr": "Gafsa",
+              "label_ar": "قفصة"
+            },
+            {
+              "value": "Jendouba",
+              "label_fr": "Jendouba",
+              "label_ar": "جندوبة"
+            },
+            {
+              "value": "Kairouan",
+              "label_fr": "Kairouan",
+              "label_ar": "القيروان"
+            },
+            {
+              "value": "Kasserine",
+              "label_fr": "Kasserine",
+              "label_ar": "القصرين"
+            },
+            {
+              "value": "Kébili",
+              "label_fr": "Kébili",
+              "label_ar": "قبلي"
+            },
+            {
+              "value": "Le Kef",
+              "label_fr": "Le Kef",
+              "label_ar": "الكاف"
+            },
+            {
+              "value": "Mahdia",
+              "label_fr": "Mahdia",
+              "label_ar": "المهدية"
+            },
+            {
+              "value": "Manouba",
+              "label_fr": "Manouba",
+              "label_ar": "منوبة"
+            },
+            {
+              "value": "Médenine",
+              "label_fr": "Médenine",
+              "label_ar": "مدنين"
+            },
+            {
+              "value": "Monastir",
+              "label_fr": "Monastir",
+              "label_ar": "المنستير"
+            },
+            {
+              "value": "Nabeul",
+              "label_fr": "Nabeul",
+              "label_ar": "نابل"
+            },
+            {
+              "value": "Sfax",
+              "label_fr": "Sfax",
+              "label_ar": "صفاقس"
+            },
+            {
+              "value": "Sidi Bouzid",
+              "label_fr": "Sidi Bouzid",
+              "label_ar": "سيدي بوزيد"
+            },
+            {
+              "value": "Siliana",
+              "label_fr": "Siliana",
+              "label_ar": "سليانة"
+            },
+            {
+              "value": "Sousse",
+              "label_fr": "Sousse",
+              "label_ar": "سوسة"
+            },
+            {
+              "value": "Tataouine",
+              "label_fr": "Tataouine",
+              "label_ar": "تطاوين"
+            },
+            {
+              "value": "Tozeur",
+              "label_fr": "Tozeur",
+              "label_ar": "توزر"
+            },
+            {
+              "value": "Tunis",
+              "label_fr": "Tunis",
+              "label_ar": "تونس"
+            },
+            {
+              "value": "Zaghouan",
+              "label_fr": "Zaghouan",
+              "label_ar": "زغوان"
+            }
+          ]
+        },
+        {
+          "key": "vat_number",
+          "label_fr": "Matricule fiscal",
+          "label_en": "VAT number",
+          "label_ar": "المعرف الجبائي",
+          "type": "text",
+          "required": false
+        }
+      ]
+    },
+    "settings_schema": {
+      "fields": []
+    },
+    "create_shipment_payload_template": {
+      "ClientInfo": {
+        "UserName": "{{credentials.username}}",
+        "Password": "{{credentials.password}}",
+        "Version": "v1.0",
+        "AccountNumber": "{{credentials.account_number}}",
+        "AccountPin": "{{credentials.account_pin}}",
+        "AccountEntity": "{{credentials.account_entity}}",
+        "AccountCountryCode": "{{credentials.account_country}}",
+        "Source": 24
+      },
+      "LabelInfo": {
+        "ReportID": 9729,
+        "ReportType": "URL"
+      },
+      "Shipments": [
+        {
+          "Reference1": "{{order.order_number}}",
+          "Shipper": {
+            "AccountNumber": "{{credentials.account_number}}",
+            "PartyAddress": {
+              "Line1": "{{sender.sender_address}}",
+              "City": "{{sender.sender_gouvernorat}}",
+              "CountryCode": "TN"
+            },
+            "Contact": {
+              "PersonName": "{{sender.sender_name}}",
+              "CompanyName": "{{sender.sender_name}}",
+              "PhoneNumber1": "{{sender.sender_phone}}",
+              "CellPhone": "{{sender.sender_phone}}"
+            }
+          },
+          "Consignee": {
+            "PartyAddress": {
+              "Line1": "{{order.address}}",
+              "City": "{{order.city}}",
+              "StateOrProvinceCode": "{{order.region}}",
+              "CountryCode": "TN"
+            },
+            "Contact": {
+              "PersonName": "{{order.client_name}}",
+              "CompanyName": "{{order.client_name}}",
+              "PhoneNumber1": "{{order.client_phone}}",
+              "CellPhone": "{{order.client_phone}}"
+            }
+          },
+          "ShippingDateTime": "{{order.date_ms}}",
+          "Details": {
+            "ActualWeight": {
+              "Unit": "KG",
+              "Value": 1
+            },
+            "NumberOfPieces": 1,
+            "ProductGroup": "DOM",
+            "ProductType": "ONP",
+            "PaymentType": "P",
+            "Services": "CODS",
+            "DescriptionOfGoods": "{{order.product_name}}",
+            "GoodsOriginCountry": "TN",
+            "CashOnDeliveryAmount": {
+              "CurrencyCode": "TND",
+              "Value": "{{order.amount}}"
+            }
+          }
+        }
+      ],
+      "Transaction": {
+        "Reference1": "{{order.order_number}}"
+      }
+    },
+    "tracking_payload_template": {
+      "ClientInfo": {
+        "UserName": "{{credentials.username}}",
+        "Password": "{{credentials.password}}",
+        "Version": "v1.0",
+        "AccountNumber": "{{credentials.account_number}}",
+        "AccountPin": "{{credentials.account_pin}}",
+        "AccountEntity": "{{credentials.account_entity}}",
+        "AccountCountryCode": "{{credentials.account_country}}",
+        "Source": 24
+      },
+      "Shipments": [
+        "{{shipment.tracking_number}}"
+      ],
+      "GetLastTrackingUpdateOnly": true
+    },
+    "response_mapping": {
+      "tracking_number": "Shipments.0.ID",
+      "label_url": "Shipments.0.ShipmentLabel.LabelURL",
+      "status": "TrackingResults.0.Value.0.UpdateCode"
+    },
+    "status_mapping": {
+      "sh005": "delivered",
+      "sh006": "delivered",
+      "sh014": "created",
+      "sh003": "in_transit",
+      "sh069": "returned"
+    },
+    "sort_order": 20
+  },
+  {
+    "country": "TN",
+    "is_active": true,
+    "is_visible_to_stores": true,
+    "integration_mode": "api",
+    "supports_cod": true,
+    "supports_return": false,
+    "supports_webhook": false,
+    "supports_open_package": false,
+    "code": "colissimo_tn",
+    "name": "Colissimo Tunisie",
+    "description": "Livraison express 24h, toutes les régions de Tunisie.",
+    "supports_tracking": true,
+    "supports_label": false,
+    "base_url": "http://delivery.colissimo.com.tn/wsColissimoGo/wsColissimoGo.asmx",
+    "auth_type": "none",
+    "auth_header_name": "",
+    "create_shipment_endpoint": "",
+    "track_shipment_endpoint": "",
+    "cancel_shipment_endpoint": "",
+    "label_endpoint": "",
+    "credentials_schema": {
+      "fields": [
+        {
+          "key": "username",
+          "label_fr": "Utilisateur API (clt_…)",
+          "label_en": "API user (clt_…)",
+          "label_ar": "مستخدم API (clt_…)",
+          "type": "text",
+          "required": true,
+          "help_fr": "Profil → identifiants API",
+          "help_en": "Profile → API credentials",
+          "help_ar": "الملف الشخصي ← بيانات API"
+        },
+        {
+          "key": "password",
+          "label_fr": "Mot de passe API",
+          "label_en": "API password",
+          "label_ar": "كلمة مرور API",
+          "type": "password",
+          "required": true
+        }
+      ]
+    },
+    "sender_schema": {
+      "fields": [
+        {
+          "key": "sender_name",
+          "label_fr": "Nom de la boutique (étiquette)",
+          "label_en": "Store name (label)",
+          "label_ar": "اسم المتجر (الملصق)",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "sender_phone",
+          "label_fr": "Téléphone de la boutique",
+          "label_en": "Store phone",
+          "label_ar": "هاتف المتجر",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "sender_address",
+          "label_fr": "Adresse d’enlèvement",
+          "label_en": "Pickup address",
+          "label_ar": "عنوان الاستلام",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "sender_gouvernorat",
+          "label_fr": "Gouvernorat d’enlèvement",
+          "label_en": "Pickup governorate",
+          "label_ar": "ولاية الاستلام",
+          "type": "select",
+          "required": true,
+          "options": [
+            {
+              "value": "Ariana",
+              "label_fr": "Ariana",
+              "label_ar": "أريانة"
+            },
+            {
+              "value": "Béja",
+              "label_fr": "Béja",
+              "label_ar": "باجة"
+            },
+            {
+              "value": "Ben Arous",
+              "label_fr": "Ben Arous",
+              "label_ar": "بن عروس"
+            },
+            {
+              "value": "Bizerte",
+              "label_fr": "Bizerte",
+              "label_ar": "بنزرت"
+            },
+            {
+              "value": "Gabès",
+              "label_fr": "Gabès",
+              "label_ar": "قابس"
+            },
+            {
+              "value": "Gafsa",
+              "label_fr": "Gafsa",
+              "label_ar": "قفصة"
+            },
+            {
+              "value": "Jendouba",
+              "label_fr": "Jendouba",
+              "label_ar": "جندوبة"
+            },
+            {
+              "value": "Kairouan",
+              "label_fr": "Kairouan",
+              "label_ar": "القيروان"
+            },
+            {
+              "value": "Kasserine",
+              "label_fr": "Kasserine",
+              "label_ar": "القصرين"
+            },
+            {
+              "value": "Kébili",
+              "label_fr": "Kébili",
+              "label_ar": "قبلي"
+            },
+            {
+              "value": "Le Kef",
+              "label_fr": "Le Kef",
+              "label_ar": "الكاف"
+            },
+            {
+              "value": "Mahdia",
+              "label_fr": "Mahdia",
+              "label_ar": "المهدية"
+            },
+            {
+              "value": "Manouba",
+              "label_fr": "Manouba",
+              "label_ar": "منوبة"
+            },
+            {
+              "value": "Médenine",
+              "label_fr": "Médenine",
+              "label_ar": "مدنين"
+            },
+            {
+              "value": "Monastir",
+              "label_fr": "Monastir",
+              "label_ar": "المنستير"
+            },
+            {
+              "value": "Nabeul",
+              "label_fr": "Nabeul",
+              "label_ar": "نابل"
+            },
+            {
+              "value": "Sfax",
+              "label_fr": "Sfax",
+              "label_ar": "صفاقس"
+            },
+            {
+              "value": "Sidi Bouzid",
+              "label_fr": "Sidi Bouzid",
+              "label_ar": "سيدي بوزيد"
+            },
+            {
+              "value": "Siliana",
+              "label_fr": "Siliana",
+              "label_ar": "سليانة"
+            },
+            {
+              "value": "Sousse",
+              "label_fr": "Sousse",
+              "label_ar": "سوسة"
+            },
+            {
+              "value": "Tataouine",
+              "label_fr": "Tataouine",
+              "label_ar": "تطاوين"
+            },
+            {
+              "value": "Tozeur",
+              "label_fr": "Tozeur",
+              "label_ar": "توزر"
+            },
+            {
+              "value": "Tunis",
+              "label_fr": "Tunis",
+              "label_ar": "تونس"
+            },
+            {
+              "value": "Zaghouan",
+              "label_fr": "Zaghouan",
+              "label_ar": "زغوان"
+            }
+          ]
+        }
+      ]
+    },
+    "settings_schema": {
+      "fields": []
+    },
+    "create_shipment_payload_template": {
+      "__format": "colissimo_soap",
+      "__operation": "AjouterColis",
+      "pic": {
+        "reference": "{{order.order_number}}",
+        "client": "{{order.client_name}}",
+        "adresse": "{{order.address}}",
+        "ville": "{{order.city}}",
+        "gouvernorat": "{{order.region}}",
+        "nb_pieces": "{{order.quantity}}",
+        "prix": "{{order.amount}}",
+        "tel1": "{{order.client_phone}}",
+        "tel2": "{{order.client_phone2}}",
+        "designation": "{{order.product_name}}",
+        "commentaire": "{{order.notes}}",
+        "type": "VO",
+        "echange": 0
+      }
+    },
+    "tracking_payload_template": {
+      "__format": "colissimo_soap",
+      "__operation": "GetColis",
+      "code_barre": "{{shipment.tracking_number}}"
+    },
+    "response_mapping": {
+      "status": "result_content.etat"
+    },
+    "status_mapping": {
+      "livré": "delivered",
+      "en cours": "in_transit",
+      "retour": "returned",
+      "annulé": "cancelled"
+    },
+    "sort_order": 30
+  },
+  {
+    "country": "TN",
+    "is_active": true,
+    "is_visible_to_stores": true,
+    "integration_mode": "api",
+    "supports_cod": true,
+    "supports_return": false,
+    "supports_webhook": false,
+    "supports_open_package": true,
+    "code": "navex",
+    "name": "Navex",
+    "description": "Livraison contre remboursement dans les 24 gouvernorats.",
+    "supports_tracking": false,
+    "supports_label": false,
+    "base_url": "https://app.navex.tn",
+    "auth_type": "none",
+    "auth_header_name": "",
+    "create_shipment_endpoint": "/api/{{credentials.api_token}}/v1/post.php",
+    "track_shipment_endpoint": "",
+    "cancel_shipment_endpoint": "",
+    "label_endpoint": "",
+    "credentials_schema": {
+      "fields": [
+        {
+          "key": "api_token",
+          "label_fr": "Jeton Navex",
+          "label_en": "Navex token",
+          "label_ar": "رمز Navex",
+          "type": "password",
+          "required": true,
+          "help_fr": "Visible dans la documentation API de votre compte Navex",
+          "help_en": "Shown in the API documentation page of your Navex account",
+          "help_ar": "يظهر في صفحة توثيق API في حساب Navex"
+        }
+      ]
+    },
+    "sender_schema": {
+      "fields": [
+        {
+          "key": "sender_name",
+          "label_fr": "Nom de la boutique (étiquette)",
+          "label_en": "Store name (label)",
+          "label_ar": "اسم المتجر (الملصق)",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "sender_address",
+          "label_fr": "Adresse d’enlèvement",
+          "label_en": "Pickup address",
+          "label_ar": "عنوان الاستلام",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "sender_gouvernorat",
+          "label_fr": "Gouvernorat d’enlèvement",
+          "label_en": "Pickup governorate",
+          "label_ar": "ولاية الاستلام",
+          "type": "select",
+          "required": true,
+          "options": [
+            {
+              "value": "Ariana",
+              "label_fr": "Ariana",
+              "label_ar": "أريانة"
+            },
+            {
+              "value": "Béja",
+              "label_fr": "Béja",
+              "label_ar": "باجة"
+            },
+            {
+              "value": "Ben Arous",
+              "label_fr": "Ben Arous",
+              "label_ar": "بن عروس"
+            },
+            {
+              "value": "Bizerte",
+              "label_fr": "Bizerte",
+              "label_ar": "بنزرت"
+            },
+            {
+              "value": "Gabès",
+              "label_fr": "Gabès",
+              "label_ar": "قابس"
+            },
+            {
+              "value": "Gafsa",
+              "label_fr": "Gafsa",
+              "label_ar": "قفصة"
+            },
+            {
+              "value": "Jendouba",
+              "label_fr": "Jendouba",
+              "label_ar": "جندوبة"
+            },
+            {
+              "value": "Kairouan",
+              "label_fr": "Kairouan",
+              "label_ar": "القيروان"
+            },
+            {
+              "value": "Kasserine",
+              "label_fr": "Kasserine",
+              "label_ar": "القصرين"
+            },
+            {
+              "value": "Kébili",
+              "label_fr": "Kébili",
+              "label_ar": "قبلي"
+            },
+            {
+              "value": "Le Kef",
+              "label_fr": "Le Kef",
+              "label_ar": "الكاف"
+            },
+            {
+              "value": "Mahdia",
+              "label_fr": "Mahdia",
+              "label_ar": "المهدية"
+            },
+            {
+              "value": "Manouba",
+              "label_fr": "Manouba",
+              "label_ar": "منوبة"
+            },
+            {
+              "value": "Médenine",
+              "label_fr": "Médenine",
+              "label_ar": "مدنين"
+            },
+            {
+              "value": "Monastir",
+              "label_fr": "Monastir",
+              "label_ar": "المنستير"
+            },
+            {
+              "value": "Nabeul",
+              "label_fr": "Nabeul",
+              "label_ar": "نابل"
+            },
+            {
+              "value": "Sfax",
+              "label_fr": "Sfax",
+              "label_ar": "صفاقس"
+            },
+            {
+              "value": "Sidi Bouzid",
+              "label_fr": "Sidi Bouzid",
+              "label_ar": "سيدي بوزيد"
+            },
+            {
+              "value": "Siliana",
+              "label_fr": "Siliana",
+              "label_ar": "سليانة"
+            },
+            {
+              "value": "Sousse",
+              "label_fr": "Sousse",
+              "label_ar": "سوسة"
+            },
+            {
+              "value": "Tataouine",
+              "label_fr": "Tataouine",
+              "label_ar": "تطاوين"
+            },
+            {
+              "value": "Tozeur",
+              "label_fr": "Tozeur",
+              "label_ar": "توزر"
+            },
+            {
+              "value": "Tunis",
+              "label_fr": "Tunis",
+              "label_ar": "تونس"
+            },
+            {
+              "value": "Zaghouan",
+              "label_fr": "Zaghouan",
+              "label_ar": "زغوان"
+            }
+          ]
+        },
+        {
+          "key": "open_package",
+          "label_fr": "Autoriser l’ouverture du colis",
+          "label_en": "Allow opening the parcel",
+          "label_ar": "السماح بفتح الطرد",
+          "type": "select",
+          "required": false,
+          "options": [
+            {
+              "value": "1",
+              "label_fr": "Oui",
+              "label_en": "Yes",
+              "label_ar": "نعم"
+            },
+            {
+              "value": "0",
+              "label_fr": "Non",
+              "label_en": "No",
+              "label_ar": "لا"
+            }
+          ]
+        }
+      ]
+    },
+    "settings_schema": {
+      "fields": []
+    },
+    "create_shipment_payload_template": {
+      "__format": "form",
+      "prix": "{{order.amount}}",
+      "nom": "{{order.client_name}}",
+      "gouvernerat": "{{order.region}}",
+      "ville": "{{order.city}}",
+      "adresse": "{{order.address}}",
+      "tel": "{{order.client_phone}}",
+      "tel2": "{{order.client_phone2}}",
+      "designation": "{{order.product_name}}",
+      "nb_article": "{{order.quantity}}",
+      "msg": "{{order.notes}}",
+      "echange": "0",
+      "article": "{{order.product_name}}",
+      "nb_echange": "0",
+      "ouvrir": "{{sender.open_package}}",
+      "sender_name": "{{sender.sender_name}}",
+      "sender_location": "{{sender.sender_address}}",
+      "sender_gouvernorat": "{{sender.sender_gouvernorat}}"
+    },
+    "tracking_payload_template": {},
+    "response_mapping": {},
+    "status_mapping": {},
+    "sort_order": 40
+  },
+  {
+    "country": "TN",
+    "is_active": true,
+    "is_visible_to_stores": true,
+    "integration_mode": "api",
+    "supports_cod": true,
+    "supports_return": false,
+    "supports_webhook": false,
+    "supports_open_package": false,
+    "code": "intigo",
+    "name": "Intigo",
+    "description": "Livraison J+1 dans les 24 gouvernorats, paiement à la livraison.",
+    "supports_tracking": true,
+    "supports_label": false,
+    "base_url": "https://partner-app.intigo.tn/api/v1/externalapi",
+    "auth_type": "none",
+    "auth_header_name": "",
+    "create_shipment_endpoint": "/adddelivery",
+    "track_shipment_endpoint": "/getDelivery",
+    "cancel_shipment_endpoint": "",
+    "label_endpoint": "",
+    "credentials_schema": {
+      "fields": [
+        {
+          "key": "api_key",
+          "label_fr": "Clé Intigo",
+          "label_en": "Intigo key",
+          "label_ar": "مفتاح Intigo",
+          "type": "password",
+          "required": true,
+          "help_fr": "my.intigo.tn → Profil → en bas de la page",
+          "help_en": "my.intigo.tn → Profile → bottom of the page",
+          "help_ar": "my.intigo.tn ← الملف الشخصي ← أسفل الصفحة"
+        }
+      ]
+    },
+    "sender_schema": {
+      "fields": [
+        {
+          "key": "sender_name",
+          "label_fr": "Nom de la boutique (étiquette)",
+          "label_en": "Store name (label)",
+          "label_ar": "اسم المتجر (الملصق)",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "sender_address",
+          "label_fr": "Adresse d’enlèvement",
+          "label_en": "Pickup address",
+          "label_ar": "عنوان الاستلام",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "sender_gouvernorat",
+          "label_fr": "Gouvernorat d’enlèvement",
+          "label_en": "Pickup governorate",
+          "label_ar": "ولاية الاستلام",
+          "type": "select",
+          "required": true,
+          "options": [
+            {
+              "value": "Ariana",
+              "label_fr": "Ariana",
+              "label_ar": "أريانة"
+            },
+            {
+              "value": "Béja",
+              "label_fr": "Béja",
+              "label_ar": "باجة"
+            },
+            {
+              "value": "Ben Arous",
+              "label_fr": "Ben Arous",
+              "label_ar": "بن عروس"
+            },
+            {
+              "value": "Bizerte",
+              "label_fr": "Bizerte",
+              "label_ar": "بنزرت"
+            },
+            {
+              "value": "Gabès",
+              "label_fr": "Gabès",
+              "label_ar": "قابس"
+            },
+            {
+              "value": "Gafsa",
+              "label_fr": "Gafsa",
+              "label_ar": "قفصة"
+            },
+            {
+              "value": "Jendouba",
+              "label_fr": "Jendouba",
+              "label_ar": "جندوبة"
+            },
+            {
+              "value": "Kairouan",
+              "label_fr": "Kairouan",
+              "label_ar": "القيروان"
+            },
+            {
+              "value": "Kasserine",
+              "label_fr": "Kasserine",
+              "label_ar": "القصرين"
+            },
+            {
+              "value": "Kébili",
+              "label_fr": "Kébili",
+              "label_ar": "قبلي"
+            },
+            {
+              "value": "Le Kef",
+              "label_fr": "Le Kef",
+              "label_ar": "الكاف"
+            },
+            {
+              "value": "Mahdia",
+              "label_fr": "Mahdia",
+              "label_ar": "المهدية"
+            },
+            {
+              "value": "Manouba",
+              "label_fr": "Manouba",
+              "label_ar": "منوبة"
+            },
+            {
+              "value": "Médenine",
+              "label_fr": "Médenine",
+              "label_ar": "مدنين"
+            },
+            {
+              "value": "Monastir",
+              "label_fr": "Monastir",
+              "label_ar": "المنستير"
+            },
+            {
+              "value": "Nabeul",
+              "label_fr": "Nabeul",
+              "label_ar": "نابل"
+            },
+            {
+              "value": "Sfax",
+              "label_fr": "Sfax",
+              "label_ar": "صفاقس"
+            },
+            {
+              "value": "Sidi Bouzid",
+              "label_fr": "Sidi Bouzid",
+              "label_ar": "سيدي بوزيد"
+            },
+            {
+              "value": "Siliana",
+              "label_fr": "Siliana",
+              "label_ar": "سليانة"
+            },
+            {
+              "value": "Sousse",
+              "label_fr": "Sousse",
+              "label_ar": "سوسة"
+            },
+            {
+              "value": "Tataouine",
+              "label_fr": "Tataouine",
+              "label_ar": "تطاوين"
+            },
+            {
+              "value": "Tozeur",
+              "label_fr": "Tozeur",
+              "label_ar": "توزر"
+            },
+            {
+              "value": "Tunis",
+              "label_fr": "Tunis",
+              "label_ar": "تونس"
+            },
+            {
+              "value": "Zaghouan",
+              "label_fr": "Zaghouan",
+              "label_ar": "زغوان"
+            }
+          ]
+        },
+        {
+          "key": "sender_city",
+          "label_fr": "Délégation d’enlèvement",
+          "label_en": "Pickup city",
+          "label_ar": "معتمدية الاستلام",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "pickup_slot",
+          "label_fr": "Créneau d’enlèvement",
+          "label_en": "Pickup time slot",
+          "label_ar": "موعد الاستلام",
+          "type": "select",
+          "required": true,
+          "options": [
+            {
+              "value": "08:00-12:00",
+              "label_fr": "08:00-12:00"
+            },
+            {
+              "value": "14:00-17:00",
+              "label_fr": "14:00-17:00"
+            }
+          ]
+        },
+        {
+          "key": "special_note",
+          "label_fr": "Note spéciale",
+          "label_en": "Special note",
+          "label_ar": "ملاحظة خاصة",
+          "type": "text",
+          "required": false
+        }
+      ]
+    },
+    "settings_schema": {
+      "fields": []
+    },
+    "create_shipment_payload_template": {
+      "apiKey": "{{credentials.api_key}}",
+      "pickUp": {
+        "address": "{{sender.sender_address}}",
+        "pickUpDate": "{{order.date_iso}}",
+        "fromTo": "{{sender.pickup_slot}}",
+        "city": "{{sender.sender_gouvernorat}}"
+      },
+      "paymentStatus": 2,
+      "amount": "{{order.amount}}",
+      "dropOff": {
+        "address": "{{order.address}}"
+      },
+      "ClientName": "{{order.client_name}}",
+      "ClientPhone": "{{order.client_phone}}",
+      "city": "{{order.region}}",
+      "subDivision": "{{order.city}}",
+      "additionalInfo": "{{order.notes}}",
+      "descProduit": "{{order.product_name}}",
+      "isExchange": false
+    },
+    "tracking_payload_template": {
+      "apiKey": "{{credentials.api_key}}",
+      "nid": "{{shipment.tracking_number}}"
+    },
+    "response_mapping": {
+      "tracking_number": "nid",
+      "external_shipment_id": "nid",
+      "status": "status"
+    },
+    "status_mapping": {
+      "pending": "created",
+      "picked up": "in_transit",
+      "in progress": "in_transit",
+      "delivered": "delivered",
+      "returned": "returned",
+      "canceled": "cancelled",
+      "cancelled": "cancelled"
+    },
+    "sort_order": 50
+  },
+  {
+    "country": "TN",
+    "is_active": false,
+    "is_visible_to_stores": true,
+    "integration_mode": "api",
+    "supports_cod": true,
+    "supports_return": false,
+    "supports_webhook": false,
+    "supports_open_package": false,
+    "code": "adex",
+    "name": "Adex",
+    "description": "Livraison à domicile partout en Tunisie avec contre-remboursement.",
+    "supports_tracking": true,
+    "supports_label": true,
+    "base_url": "",
+    "auth_type": "none",
+    "auth_header_name": "",
+    "create_shipment_endpoint": "/Add_colis",
+    "track_shipment_endpoint": "/TrackShipmentStatus",
+    "cancel_shipment_endpoint": "",
+    "label_endpoint": "",
+    "credentials_schema": {
+      "fields": [
+        {
+          "key": "username",
+          "label_fr": "Nom d’utilisateur Adex",
+          "label_en": "Adex username",
+          "label_ar": "اسم مستخدم Adex",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "api_token",
+          "label_fr": "Jeton API Adex",
+          "label_en": "Adex API token",
+          "label_ar": "رمز API Adex",
+          "type": "password",
+          "required": true,
+          "help_fr": "Compte Adex → Profil → Accès API REST → Générer un token API",
+          "help_en": "Adex account → Profile → REST API access → Generate API token",
+          "help_ar": "حساب Adex ← الملف الشخصي ← الوصول إلى REST API ← إنشاء رمز"
+        }
+      ]
+    },
+    "sender_schema": {
+      "fields": [
+        {
+          "key": "sender_name",
+          "label_fr": "Nom de la boutique (étiquette)",
+          "label_en": "Store name (label)",
+          "label_ar": "اسم المتجر (الملصق)",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "sender_phone",
+          "label_fr": "Téléphone de la boutique",
+          "label_en": "Store phone",
+          "label_ar": "هاتف المتجر",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "sender_address",
+          "label_fr": "Adresse d’enlèvement",
+          "label_en": "Pickup address",
+          "label_ar": "عنوان الاستلام",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "vat_number",
+          "label_fr": "Matricule fiscal",
+          "label_en": "VAT number",
+          "label_ar": "المعرف الجبائي",
+          "type": "text",
+          "required": false
+        },
+        {
+          "key": "fragile",
+          "label_fr": "Fragile",
+          "label_en": "Fragile",
+          "label_ar": "قابل للكسر",
+          "type": "select",
+          "required": false,
+          "options": [
+            {
+              "value": "1",
+              "label_fr": "Oui",
+              "label_en": "Yes",
+              "label_ar": "نعم"
+            },
+            {
+              "value": "0",
+              "label_fr": "Non",
+              "label_en": "No",
+              "label_ar": "لا"
+            }
+          ]
+        },
+        {
+          "key": "parcel_size",
+          "label_fr": "Taille du colis",
+          "label_en": "Parcel size",
+          "label_ar": "حجم الطرد",
+          "type": "select",
+          "required": false,
+          "options": [
+            {
+              "value": "0",
+              "label_fr": "Léger",
+              "label_ar": "خفيف"
+            },
+            {
+              "value": "1",
+              "label_fr": "Moyen",
+              "label_ar": "متوسط"
+            },
+            {
+              "value": "2",
+              "label_fr": "Grand",
+              "label_ar": "كبير"
+            }
+          ]
+        }
+      ]
+    },
+    "settings_schema": {
+      "fields": []
+    },
+    "create_shipment_payload_template": {
+      "__headers": {
+        "USER": "{{credentials.username}}",
+        "PWD": "{{credentials.api_token}}"
+      },
+      "nom_cli": "{{order.client_name}}",
+      "ville_cli": "{{order.adex_region}}",
+      "ContenuColis": "{{order.product_name}}",
+      "nbr_colis": "{{order.quantity}}",
+      "type_colis_tab": "{{sender.parcel_size}}",
+      "adr_cli": "{{order.address}}",
+      "tel_cli": "{{order.client_phone}}",
+      "tel_cli2": "{{order.client_phone2}}",
+      "tel_cli3": "",
+      "ttc_cmd": "{{order.amount}}",
+      "echange_cmd": 0,
+      "ancienne_commande_echange": "",
+      "produit_arecevoir": "",
+      "commentaire_cmd": "{{order.notes}}",
+      "code_barres_ext": "{{order.order_number}}",
+      "fragile": "{{sender.fragile}}"
+    },
+    "tracking_payload_template": {
+      "__headers": {
+        "USER": "{{credentials.username}}",
+        "PWD": "{{credentials.api_token}}"
+      },
+      "num_suivi_cmd": [
+        "{{shipment.tracking_number}}"
+      ]
+    },
+    "response_mapping": {
+      "tracking_number": "num_suivi_cmd",
+      "label_url": "url_bl",
+      "status": "0.etat"
+    },
+    "status_mapping": {
+      "en attente": "created",
+      "ramassé": "in_transit",
+      "au dépôt": "in_transit",
+      "en livraison": "in_transit",
+      "reporté": "in_transit",
+      "livré": "delivered",
+      "retour": "returned"
+    },
+    "sort_order": 60
+  },
+  {
+    "country": "TN",
+    "is_active": true,
+    "is_visible_to_stores": true,
+    "integration_mode": "manual",
+    "supports_cod": true,
+    "supports_return": false,
+    "supports_webhook": false,
+    "supports_open_package": false,
+    "code": "personal",
+    "name": "Livraison personnelle",
+    "description": "Livrez avec votre propre équipe et imprimez un reçu à votre marque.",
+    "supports_tracking": false,
+    "supports_label": true,
+    "base_url": "",
+    "auth_type": "none",
+    "auth_header_name": "",
+    "create_shipment_endpoint": "",
+    "track_shipment_endpoint": "",
+    "cancel_shipment_endpoint": "",
+    "label_endpoint": "",
+    "credentials_schema": {
+      "fields": []
+    },
+    "sender_schema": {
+      "fields": [
+        {
+          "key": "company_name",
+          "label_fr": "Nom de l’entreprise",
+          "label_en": "Company name",
+          "label_ar": "اسم الشركة",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "logo_url",
+          "label_fr": "Logo (lien image 400×150)",
+          "label_en": "Logo (400×150 image link)",
+          "label_ar": "الشعار (رابط صورة 400×150)",
+          "type": "text",
+          "required": false
+        },
+        {
+          "key": "brand_color",
+          "label_fr": "Couleur (#000000)",
+          "label_en": "Colour (#000000)",
+          "label_ar": "اللون (#000000)",
+          "type": "text",
+          "required": false
+        },
+        {
+          "key": "vat_number",
+          "label_fr": "Matricule fiscal",
+          "label_en": "VAT number",
+          "label_ar": "المعرف الجبائي",
+          "type": "text",
+          "required": false
+        },
+        {
+          "key": "company_address",
+          "label_fr": "Adresse",
+          "label_en": "Address",
+          "label_ar": "العنوان",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "company_phone",
+          "label_fr": "Téléphone",
+          "label_en": "Phone",
+          "label_ar": "الهاتف",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "company_email",
+          "label_fr": "E-mail",
+          "label_en": "Email",
+          "label_ar": "البريد الإلكتروني",
+          "type": "text",
+          "required": false
+        },
+        {
+          "key": "company_website",
+          "label_fr": "Site web",
+          "label_en": "Website",
+          "label_ar": "الموقع",
+          "type": "text",
+          "required": false
+        },
+        {
+          "key": "receipt_note",
+          "label_fr": "Note sur le reçu",
+          "label_en": "Receipt note",
+          "label_ar": "ملاحظة على الوصل",
+          "type": "text",
+          "required": false
+        }
+      ]
+    },
+    "settings_schema": {
+      "fields": []
+    },
+    "create_shipment_payload_template": {},
+    "tracking_payload_template": {},
+    "response_mapping": {},
+    "status_mapping": {},
+    "sort_order": 70
+  }
+]

@@ -1,5 +1,23 @@
 // Startup seed: default plans + super-admin promotion. Idempotent.
 import { pool } from '../db.js';
+import { readFileSync } from 'node:fs';
+
+const DELIVERY_PRESETS = JSON.parse(readFileSync(new URL('./deliveryPresets.json', import.meta.url), 'utf8'));
+
+// Adds missing carriers only; existing rows (including admin-disabled ones) are never changed.
+export async function seedDeliveryProviders(query) {
+  for (const preset of DELIVERY_PRESETS) {
+    const columns = Object.keys(preset);
+    const values = columns.map((key) => (preset[key] !== null && typeof preset[key] === 'object' ? JSON.stringify(preset[key]) : preset[key]));
+    const codeParam = columns.indexOf('code') + 1;
+    await query(
+      `INSERT INTO public.delivery_providers (${columns.map((c) => `"${c}"`).join(',')}, created_at, updated_at)
+       SELECT ${columns.map((_, i) => `$${i + 1}`).join(',')}, now(), now()
+        WHERE NOT EXISTS (SELECT 1 FROM public.delivery_providers WHERE code = $${codeParam})`,
+      values,
+    );
+  }
+}
 
 const PLANS = [
   { code: 'starter', name: 'Starter', price: 0, tier: 0, fee: 0.3 },
@@ -30,6 +48,7 @@ export async function seed(log) {
              VALUES ('00000000-0000-0000-0000-000000000001','twilio','disconnected') ON CONFLICT (id) DO NOTHING`);
   await run(`INSERT INTO public.payment_gateway_settings (id,provider,environment)
              VALUES ('00000000-0000-0000-0000-000000000002','konnect','sandbox') ON CONFLICT (id) DO NOTHING`);
+  await seedDeliveryProviders(run);
   // Promote configured admin emails (account must already exist).
   const emails = (process.env.SUPER_ADMIN_EMAILS || 'admin@e-commence.shop')
     .split(',').map((e) => e.trim().toLowerCase()).filter(Boolean);

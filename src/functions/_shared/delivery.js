@@ -88,21 +88,10 @@ export function extractFirstMatch(res, paths) {
   return null;
 }
 
-const foldStatus = (v) => String(v ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[`’']/g, ' ').toLowerCase().replace(/\s+/g, ' ').trim();
 export function mapStatus(mapping, status) {
   const s = String(status ?? '');
   const n = s.toLowerCase().trim();
-  if (mapping[n] || mapping[s]) return mapping[n] || mapping[s];
-  const f = foldStatus(s);
-  const hit = Object.entries(mapping || {}).find(([k]) => foldStatus(k) === f);
-  return hit ? hit[1] : n;
-}
-
-/** Navex and Colissimo spell this governorate "La Manouba" in their official lists. */
-export function carrierRegion(code, region) {
-  const r = String(region || '').trim();
-  if ((code === 'navex' || code === 'colissimo_tn') && /^(la |gouvernorat de )?man+ouba$/i.test(r.normalize('NFD').replace(/[\u0300-\u036f]/g, ''))) return 'La Manouba';
-  return r;
+  return mapping[n] || mapping[s] || n;
 }
 
 /** Providers can reject a request with HTTP 200; never treat that as success. */
@@ -192,8 +181,6 @@ export function coerceFirstDeliveryPayload(payload) {
     for (const f of numericClientFields) if (payload.Client[f] != null) payload.Client[f] = Number(payload.Client[f]);
   }
   if (payload.Produit && typeof payload.Produit === 'object') {
-    // Optional "oui"/"non" flags: omit when the seller left them unset instead of sending "".
-    for (const f of ['estFragile', 'ouvrirColis']) if (payload.Produit[f] !== 'oui' && payload.Produit[f] !== 'non') delete payload.Produit[f];
     for (const f of numericProduitFields) if (payload.Produit[f] != null) payload.Produit[f] = Number(payload.Produit[f]);
   }
   return payload;
@@ -209,8 +196,8 @@ export function adexGovernorateCode(region) {
 
 export async function createShipment(provider, credentials, integration, order) {
   let payload = deepReplace(provider.create_shipment_payload_template || {}, {
-    order: { ...order, region: carrierRegion(provider.code, order.region), amount: String(order.amount), quantity: String(order.quantity), date_ms: `/Date(${Date.now()})/`, date_iso: new Date().toISOString().slice(0, 10), adex_region: adexGovernorateCode(order.region) },
-    sender: { ...(integration.sender_config || {}), sender_gouvernorat: carrierRegion(provider.code, integration.sender_config?.sender_gouvernorat) },
+    order: { ...order, amount: String(order.amount), quantity: String(order.quantity), date_ms: `/Date(${Date.now()})/`, date_iso: new Date().toISOString().slice(0, 10), adex_region: adexGovernorateCode(order.region) },
+    sender: integration.sender_config || {},
     settings: integration.provider_settings || {},
     credentials: credentials || {},
   });
@@ -232,7 +219,7 @@ export async function createShipment(provider, credentials, integration, order) 
     const pick = (paths) => { for (const p of paths) { const v = scalar(extractValueByPath(data, p)); if (v != null) return String(v); } return null; };
     const trackingNumber = pick(trackingPaths);
     const externalId = pick(idPaths) || trackingNumber;
-    const acknowledged = /product added|colis ajout/i.test(String(data?.status_message || data?.message || '')) || data?.success === true || data?.isError === false || /^(success|succès)$/i.test(String(data?.result_type || ''));
+    const acknowledged = data?.success === true || data?.isError === false || /^(success|succès)$/i.test(String(data?.result_type || ''));
     if (!externalId && !acknowledged) return fail(data, 'Carrier response did not confirm shipment creation. Check the carrier portal before retrying.');
     const warning = trackingNumber ? null : "Commande envoyée, mais aucun code à barre n'a été retourné.";
     return {
