@@ -94,7 +94,8 @@ export default async function saveDeliveryIntegration(req, res, ctx) {
   } else if (!provider.base_url) {
     status = 'error';
   } else if (credentialsChanged) {
-    status = 'configured';
+    // Carriers without a probe endpoint are usable as soon as credentials are stored.
+    status = provider.code === 'first_delivery' || provider.localities_endpoint ? 'configured' : 'connected';
   } else if (existing?.status === 'connected') {
     status = 'connected';
   } else if (hasCreds) {

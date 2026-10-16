@@ -17,6 +17,7 @@ import { autoMigrate } from './db/autoMigrate.js';
 import { seed } from './db/seed.js';
 import { schemaDrift } from './db/schemaModel.js';
 import { docsRouter } from './docs/router.js';
+import { startAutomationWorker } from './lib/automationWebhooks.js';
 
 const log = createLogger('server');
 
@@ -151,6 +152,7 @@ if (isMain) {
     log.fatal('database not usable, refusing to start', { message: err.message, code: err.code });
     process.exit(1);
   }
+  startAutomationWorker((sql, p) => pool.query(sql, p).then((r) => r.rows), log);
   server.listen(config.port, () => {
     log.info('listening', { url: `http://localhost:${config.port}`, env: config.env, autoSchema: config.autoSchema });
   });

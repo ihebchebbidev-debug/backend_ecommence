@@ -29,6 +29,7 @@ import storefrontMetaEvent from './storefront-meta-event.js';
 import adminDeleteAuthUser from './admin-delete-auth-user.js';
 import whatsappRegister from './whatsapp-register.js';
 import whatsappWebhook from './whatsapp-webhook.js';
+import automationWebhooks from './automation-webhooks.js';
 
 /** name → { handler, verifyJwt } — verifyJwt matches supabase/config.toml. */
 export const edgeFunctions = {
@@ -52,6 +53,7 @@ export const edgeFunctions = {
   'admin-delete-auth-user': { handler: adminDeleteAuthUser, verifyJwt: true },
   'whatsapp-register': { handler: whatsappRegister, verifyJwt: true },
   'whatsapp-webhook': { handler: whatsappWebhook, verifyJwt: false },
+  'automation-webhooks': { handler: automationWebhooks, verifyJwt: true },
 };
 
 export const functionsRouter = express.Router();

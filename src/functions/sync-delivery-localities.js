@@ -30,6 +30,13 @@ export default async function syncDeliveryLocalities(req, res, ctx) {
   try { credentials = decryptDeliveryCredentials(secret.credentials_ciphertext, secret.credentials_iv); }
   catch { return json(res, { error: 'Token non configuré' }, 400); }
 
+  // Only First Delivery publishes a read-only endpoint usable as a credential probe.
+  // Other carriers validate credentials on their first real shipment, whose errors are surfaced.
+  if (provider.code !== 'first_delivery' && !provider.localities_endpoint) {
+    await ctx.q(`UPDATE public.store_delivery_integrations SET status='connected', last_error=NULL, last_test_at=now(), updated_at=now() WHERE id=$1`, [integration.id]);
+    return json(res, { ok: true, synced: 0, message: 'Identifiants enregistrés. Ce transporteur ne propose pas de test : la première expédition confirmera la connexion.' });
+  }
+
   const localitiesUrl = `${provider.base_url}${provider.localities_endpoint || '/localities'}`;
   const headers = buildAuthHeaders(provider, credentials);
 
