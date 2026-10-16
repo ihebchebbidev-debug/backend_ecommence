@@ -65,11 +65,11 @@ export default async function saveDeliveryIntegration(req, res, ctx) {
 
   // ── Check encryption key configured ──
   const key = deliveryKey();
-  if (!canEncrypt(key)) return json(res, { error: 'Delivery encryption key missing' }, 500);
+  if (provider.integration_mode !== 'manual' && !canEncrypt(key)) return json(res, { error: 'Delivery encryption key missing' }, 500);
 
   const hasNewCreds = hasNewCredsPre;
   let encrypted = null;
-  if (hasNewCreds) encrypted = encryptJson(key, credentials);
+  if (hasNewCreds && provider.integration_mode !== 'manual') encrypted = encryptJson(key, credentials);
 
   // ── Load existing integration ──
   const existing = await ctx.q(

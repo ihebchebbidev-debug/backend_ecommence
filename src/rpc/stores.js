@@ -82,6 +82,14 @@ async function createStoreRecords(t, userId, input, storeName, slugBase) {
     [store.id, input.checkout_type || 'multi_step', input.checkout_position || 'right', input.require_phone ?? true, input.require_address ?? true, input.require_email ?? false, input.require_notes ?? false],
   );
 
+  // Buying flow and payment choice from onboarding, stored where the settings screen and storefront read them.
+  const checkoutType = ['express', 'cart', 'both'].includes(input.checkout_type) ? input.checkout_type : 'express';
+  const paymentMode = ['cod', 'online', 'both'].includes(input.payment_mode) ? input.payment_mode : 'cod';
+  await t.q(
+    `INSERT INTO public.store_settings (store_id,key,value) VALUES ($1,'checkout_type',$2),($1,'payment_mode',$3)
+     ON CONFLICT (store_id,key) DO UPDATE SET value=EXCLUDED.value`,
+    [store.id, checkoutType, paymentMode],
+  );
   const answers = input.answers || {};
   await t.q(
     `INSERT INTO public.store_onboarding_answers

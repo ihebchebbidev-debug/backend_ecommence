@@ -1,5 +1,5 @@
 import { json, methodGuard } from './_shared/respond.js';
-import { decryptDeliveryCredentials, canEncryptDelivery, buildAuthHeaders, assertAccountAndStore, deliveryResponseError, sendProviderRequest } from './_shared/delivery.js';
+import { decryptDeliveryCredentials, canEncryptDelivery, assertAccountAndStore, deliveryResponseError, sendProviderRequest } from './_shared/delivery.js';
 
 export default async function cancelDeliveryShipment(req, res, ctx) {
   if (methodGuard(req, res)) return;
@@ -14,6 +14,7 @@ export default async function cancelDeliveryShipment(req, res, ctx) {
 
   const provider = await ctx.q('SELECT * FROM public.delivery_providers WHERE id=$1', [shipment.provider_id]).then((r) => r[0]);
   if (!provider) return json(res, { error: 'Provider introuvable' }, 404);
+  if (provider.code !== 'first_delivery') return json(res, { error: 'Automatic cancellation is not supported for this carrier. Cancel in the carrier portal.', code: 'carrier_cancel_unsupported' }, 400);
 
   const integration = await ctx.q('SELECT * FROM public.store_delivery_integrations WHERE store_id=$1 AND provider_id=$2', [store_id, provider.id]).then((r) => r[0]);
   if (!integration) return json(res, { error: 'Intégration non configurée' }, 400);
@@ -28,12 +29,11 @@ export default async function cancelDeliveryShipment(req, res, ctx) {
   catch { return json(res, { error: 'Token non configuré' }, 400); }
 
   // First Delivery: PUT /bulk-cancellation { barCodes } — only pending orders can be cancelled.
-  const isFirst = provider.code === 'first_delivery';
-  const payload = { ...(isFirst ? { __method: 'PUT' } : {}), barCodes: [shipment.tracking_number] };
-  const { res: apiRes, data } = await sendProviderRequest(provider, credentials, provider.cancel_shipment_endpoint || (isFirst ? '/bulk-cancellation' : '/cancel-orders'), payload, 15000);
+  const payload = { __method: 'PUT', barCodes: [shipment.tracking_number] };
+  const { res: apiRes, data } = await sendProviderRequest(provider, credentials, provider.cancel_shipment_endpoint || '/bulk-cancellation', payload, 15000);
   if (!apiRes.ok) return json(res, { error: `Erreur annulation API: HTTP ${apiRes.status}` }, 502);
   if (!data || deliveryResponseError(data)) return json(res, { error: deliveryResponseError(data) || 'Réponse annulation invalide' }, 502);
-  if (Array.isArray(data.result) && !data.result.map(String).includes(String(shipment.tracking_number))) {
+  if (!Array.isArray(data.result) || !data.result.map(String).includes(String(shipment.tracking_number))) {
     return json(res, { error: "Le transporteur n'a pas annulé ce colis (seuls les colis en attente peuvent l'être)." }, 409);
   }
 

@@ -88,15 +88,27 @@ export function extractFirstMatch(res, paths) {
   return null;
 }
 
+const foldStatus = (v) => String(v ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[`’']/g, ' ').toLowerCase().replace(/\s+/g, ' ').trim();
 export function mapStatus(mapping, status) {
   const s = String(status ?? '');
   const n = s.toLowerCase().trim();
-  return mapping[n] || mapping[s] || n;
+  if (mapping[n] || mapping[s]) return mapping[n] || mapping[s];
+  const f = foldStatus(s);
+  const hit = Object.entries(mapping || {}).find(([k]) => foldStatus(k) === f);
+  return hit ? hit[1] : n;
+}
+
+/** Navex and Colissimo spell this governorate "La Manouba" in their official lists. */
+export function carrierRegion(code, region) {
+  const r = String(region || '').trim();
+  if ((code === 'navex' || code === 'colissimo_tn') && /^(la |gouvernorat de )?man+ouba$/i.test(r.normalize('NFD').replace(/[\u0300-\u036f]/g, ''))) return 'La Manouba';
+  return r;
 }
 
 /** Providers can reject a request with HTTP 200; never treat that as success. */
 export function deliveryResponseError(data) {
-  if (!data || typeof data !== 'object' || Array.isArray(data)) return null;
+  if (!data || typeof data !== 'object') return null;
+  if (Array.isArray(data)) return data.map(deliveryResponseError).find(Boolean) || null;
   const firstShipment = Array.isArray(data.Shipments) ? data.Shipments[0] : null;
   const notes = [].concat(data.Notifications || [], firstShipment?.Notifications || []);
   if (data.HasErrors === true || firstShipment?.HasErrors === true) {
@@ -125,7 +137,14 @@ export function providerUrl(provider, endpoint, credentials) {
 /** Builds the HTTP body for the provider's wire format: JSON (default), form-encoded, or Colissimo Tunisie SOAP. */
 export function buildProviderRequest(provider, credentials, payload) {
   const headers = buildAuthHeaders(provider, credentials);
-  const { __format: format = 'json', __operation: operation, __method: method = 'POST', ...fields } = payload || {};
+  const { __format: format = 'json', __operation: operation, __method: method = 'POST', __headers: extraHeaders, ...fields } = payload || {};
+  // Carriers such as Adex authenticate with custom headers (USER / PWD) filled from the credentials.
+  if (extraHeaders && typeof extraHeaders === 'object') {
+    for (const [k, v] of Object.entries(extraHeaders)) {
+      const value = typeof v === 'string' ? v.replace(/\{\{\s*credentials\.(\w+)\s*\}\}/g, (_, key) => cleanToken(credentials?.[key])) : v;
+      if (value != null && value !== '') headers[k] = cleanToken(value);
+    }
+  }
   if (format === 'form') {
     headers['Content-Type'] = 'application/x-www-form-urlencoded';
     const body = new URLSearchParams(Object.entries(fields).map(([k, v]) => [k, v == null ? '' : String(v)])).toString();
@@ -154,8 +173,10 @@ export function parseProviderResponse(text, format, operation) {
 }
 
 export async function sendProviderRequest(provider, credentials, endpoint, payload, timeoutMs = 30000) {
+  const url = providerUrl(provider, endpoint, credentials);
+  if (!/^https:\/\//i.test(url)) throw new Error('Carrier API requires HTTPS; ask the carrier for a secure endpoint.');
   const req = buildProviderRequest(provider, credentials, payload);
-  const res = await fetch(providerUrl(provider, endpoint, credentials), { method: req.method, headers: req.headers, body: req.body, signal: AbortSignal.timeout(timeoutMs) });
+  const res = await fetch(url, { method: req.method, headers: req.headers, body: req.body, redirect: 'error', signal: AbortSignal.timeout(timeoutMs) });
   const text = await res.text().catch(() => '');
   return { res, data: parseProviderResponse(text, req.format, req.operation) };
 }
@@ -171,15 +192,25 @@ export function coerceFirstDeliveryPayload(payload) {
     for (const f of numericClientFields) if (payload.Client[f] != null) payload.Client[f] = Number(payload.Client[f]);
   }
   if (payload.Produit && typeof payload.Produit === 'object') {
+    // Optional "oui"/"non" flags: omit when the seller left them unset instead of sending "".
+    for (const f of ['estFragile', 'ouvrirColis']) if (payload.Produit[f] !== 'oui' && payload.Produit[f] !== 'non') delete payload.Produit[f];
     for (const f of numericProduitFields) if (payload.Produit[f] != null) payload.Produit[f] = Number(payload.Produit[f]);
   }
   return payload;
 }
 
+// Adex identifies governorates by number (official API guide, field ville_cli).
+const ADEX_GOVERNORATES = ['ariana', 'beja', 'ben arous', 'bizerte', 'gabes', 'gafsa', 'jendouba', 'kairouan', 'kasserine', 'kebili', 'le kef', 'mahdia', 'manouba', 'medenine', 'monastir', 'nabeul', 'sfax', 'sidi bouzid', 'siliana', 'sousse', 'tataouine', 'tozeur', 'tunis', 'zaghouan'];
+export function adexGovernorateCode(region) {
+  const n = String(region || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/^(gouvernorat de |el )/, '').replace('mannouba', 'manouba').replace(/^kef$/, 'le kef').trim();
+  const i = ADEX_GOVERNORATES.indexOf(n);
+  return i >= 0 ? String(i + 1) : '';
+}
+
 export async function createShipment(provider, credentials, integration, order) {
   let payload = deepReplace(provider.create_shipment_payload_template || {}, {
-    order: { ...order, amount: String(order.amount), quantity: String(order.quantity), date_ms: `/Date(${Date.now()})/` },
-    sender: integration.sender_config || {},
+    order: { ...order, region: carrierRegion(provider.code, order.region), amount: String(order.amount), quantity: String(order.quantity), date_ms: `/Date(${Date.now()})/`, date_iso: new Date().toISOString().slice(0, 10), adex_region: adexGovernorateCode(order.region) },
+    sender: { ...(integration.sender_config || {}), sender_gouvernorat: carrierRegion(provider.code, integration.sender_config?.sender_gouvernorat) },
     settings: integration.provider_settings || {},
     credentials: credentials || {},
   });
@@ -196,18 +227,20 @@ export async function createShipment(provider, credentials, integration, order) 
     const refused = deliveryResponseError(data);
     if (refused) return fail(data, refused);
     const m = provider.response_mapping || {};
-    const trackingPaths = [m.tracking_number, 'result.barCode', 'result.barcode', 'result.codeBarre', 'data.barCode', 'data.barcode', 'barCode', 'barcode', 'Shipments.0.ID', 'result_content.code_barre', 'result_content.barcode', 'result_content', 'code_barre', 'colis.code_barre', 'colis.code'].filter(Boolean);
-    const idPaths = [m.external_shipment_id, 'result.id', 'data.id', 'id', 'result.barCode', 'barCode', 'Shipments.0.ID'].filter(Boolean);
+    const trackingPaths = [m.tracking_number, 'result.barCode', 'result.barcode', 'result.codeBarre', 'data.barCode', 'data.barcode', 'barCode', 'barcode', 'Shipments.0.ID', 'result_content.code_barre', 'result_content.barcode', 'result_content', 'code_barre', 'colis.code_barre', 'colis.code', 'num_suivi_cmd', 'nid', 'data.nid'].filter(Boolean);
+    const idPaths = [m.external_shipment_id, 'result.id', 'data.id', 'id', 'nid', 'data.nid', 'result.barCode', 'barCode', 'Shipments.0.ID'].filter(Boolean);
     const pick = (paths) => { for (const p of paths) { const v = scalar(extractValueByPath(data, p)); if (v != null) return String(v); } return null; };
     const trackingNumber = pick(trackingPaths);
     const externalId = pick(idPaths) || trackingNumber;
+    const acknowledged = /product added|colis ajout/i.test(String(data?.status_message || data?.message || '')) || data?.success === true || data?.isError === false || /^(success|succès)$/i.test(String(data?.result_type || ''));
+    if (!externalId && !acknowledged) return fail(data, 'Carrier response did not confirm shipment creation. Check the carrier portal before retrying.');
     const warning = trackingNumber ? null : "Commande envoyée, mais aucun code à barre n'a été retourné.";
     return {
       success: true,
       external_shipment_id: externalId,
       tracking_number: trackingNumber,
       tracking_url: pick([m.tracking_url, 'data.tracking_url'].filter(Boolean)),
-      label_url: pick([m.label_url, 'data.label_url', 'result.link', 'Shipments.0.ShipmentLabel.LabelURL'].filter(Boolean)),
+      label_url: pick([m.label_url, 'data.label_url', 'result.link', 'url_bl', 'Shipments.0.ShipmentLabel.LabelURL'].filter(Boolean)),
       status: 'created',
       raw_response: data,
       warning,

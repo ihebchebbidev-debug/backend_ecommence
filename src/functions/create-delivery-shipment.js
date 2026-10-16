@@ -47,6 +47,8 @@ export default async function createDeliveryShipment(req, res, ctx) {
     return json(res, { success: true, shipment: { id: existing.id, external_shipment_id: existing.external_shipment_id, tracking_number: existing.tracking_number, tracking_url: existing.tracking_url, label_url: existing.label_url, status: existing.status, already_exists: true } });
   }
 
+  let credentials = {};
+  if (provider.integration_mode !== 'manual') {
   const secret = await ctx.q(
     'SELECT credentials_ciphertext, credentials_iv, encryption_version FROM public.delivery_integration_secrets WHERE integration_id=$1',
     [integration.id],
@@ -55,9 +57,9 @@ export default async function createDeliveryShipment(req, res, ctx) {
   if (!canEncryptDelivery()) return json(res, { error: 'Delivery encryption key missing' }, 500);
   if (secret.encryption_version === 'legacy-xor-v0') return json(res, { error: 'Provider credentials not configured' }, 400);
 
-  let credentials;
   try { credentials = decryptDeliveryCredentials(secret.credentials_ciphertext, secret.credentials_iv); }
   catch { return json(res, { error: 'Provider credentials not configured' }, 400); }
+  }
 
   if (provider.code === 'first_delivery') {
     if (form_overrides) {

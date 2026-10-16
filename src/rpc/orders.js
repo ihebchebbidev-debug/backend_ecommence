@@ -321,6 +321,14 @@ export default {
     return ctx.tx(async (t) => {
       // Serialize per shop: order numbers, coupon caps and stock stay consistent.
       await t.one('SELECT id FROM public.platform_stores WHERE id = $1 FOR UPDATE', [p_store_id]);
+      // Respect the shop's payment choice (cash on delivery / online / both); online-only falls back to cash when no provider is connected.
+      const modeRow = await t.one(`SELECT value FROM public.store_settings WHERE store_id=$1 AND key='payment_mode'`, [p_store_id]);
+      const paymentMode = ['online', 'both'].includes(modeRow?.value) ? modeRow.value : 'cod';
+      const wantsCard = p_payment_method === 'card';
+      if (paymentMode !== 'cod') {
+        const online = await t.one(`SELECT 1 AS ok FROM public.store_payment_integrations WHERE store_id=$1 AND is_active=true AND connection_status='connected' LIMIT 1`, [p_store_id]);
+        if (paymentMode === 'online' && online && !wantsCard) throw badRequest('Ce magasin accepte uniquement le paiement en ligne', { code: 'PAYMENT_ONLINE_ONLY' });
+      } else if (wantsCard) throw badRequest('Ce magasin accepte uniquement le paiement à la livraison', { code: 'PAYMENT_COD_ONLY' });
       if (requestId) {
         const prior = await t.one('SELECT id, order_number, amount, checkout_fingerprint FROM public.orders WHERE store_id=$1 AND checkout_request_id=$2', [p_store_id, requestId]);
         if (prior) {

@@ -23,6 +23,7 @@ export default async function trackDeliveryShipment(req, res, ctx) {
 
   const provider = await ctx.q('SELECT * FROM public.delivery_providers WHERE id=$1', [shipment.provider_id]).then((r) => r[0]);
   if (!provider) return json(res, { error: 'Provider introuvable' }, 404);
+  if (!provider.supports_tracking || provider.integration_mode === 'manual') return json(res, { error: 'Automatic tracking is unavailable for this carrier. Update the status manually.', code: 'carrier_tracking_unsupported' }, 400);
 
   if (!checkRateLimit(store_id, provider.code)) return json(res, { error: 'Veuillez patienter avant de relancer la synchronisation.' }, 429);
 
@@ -42,7 +43,9 @@ export default async function trackDeliveryShipment(req, res, ctx) {
     ? deepReplace(provider.tracking_payload_template, { shipment, credentials })
     : { barCode: shipment.tracking_number };
 
-  const { res: apiRes, data } = await sendProviderRequest(provider, credentials, provider.track_shipment_endpoint || '/etat', payload, 15000);
+  const endpoint = provider.track_shipment_endpoint || (payload.__format === 'colissimo_soap' ? '' : provider.code === 'first_delivery' ? '/etat' : null);
+  if (endpoint === null) return json(res, { error: 'Carrier tracking endpoint is not configured' }, 400);
+  const { res: apiRes, data } = await sendProviderRequest(provider, credentials, endpoint, payload, 15000);
   if (!apiRes.ok) return json(res, { error: deliveryResponseError(data) || `Erreur API: HTTP ${apiRes.status}` }, 502);
   if (!data || !Object.keys(data).length || deliveryResponseError(data)) return json(res, { error: deliveryResponseError(data) || 'Réponse suivi invalide' }, 502);
 

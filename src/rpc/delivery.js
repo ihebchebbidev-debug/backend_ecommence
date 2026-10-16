@@ -19,6 +19,7 @@ export default {
       `SELECT
          ${PROVIDER_COLUMNS},
          dp.integration_mode,
+          sdi.enabled,
          sdi.has_credentials,
          sdi.default_provider,
          sdi.delivery_cost_tnd,
@@ -163,7 +164,8 @@ export default {
          sdi.status
        FROM public.store_delivery_integrations sdi
        JOIN public.delivery_providers dp ON dp.id = sdi.provider_id
-       WHERE sdi.store_id = $1 AND sdi.enabled = true AND sdi.has_credentials = true
+        WHERE sdi.store_id = $1 AND sdi.enabled = true AND sdi.status = 'connected'
+          AND (sdi.has_credentials = true OR dp.integration_mode = 'manual')
        ORDER BY dp.sort_order, dp.name`,
       [p_store_id],
     );
