@@ -1,5 +1,25 @@
 // Custom domain requests: sellers submit, the platform owner connects the domain by hand and marks it active.
+import dns from 'node:dns/promises';
 import { badRequest, forbidden } from '../lib/errors.js';
+
+// Seller domains must point at the platform server (same address as e-commence.shop).
+export const platformIps = () => String(process.env.PLATFORM_DOMAIN_IPS || '186.241.19.85').split(',').map((s) => s.trim()).filter(Boolean);
+
+/** DNS check: root and www must both resolve only to platform addresses. Pure decision kept testable. */
+export function dnsVerdict(rootIps, wwwIps, allowed) {
+  const ok = (ips) => ips.length > 0 && ips.every((ip) => allowed.includes(ip));
+  return { root: ok(rootIps), www: ok(wwwIps), ok: ok(rootIps) && ok(wwwIps) };
+}
+const resolve = (host) => dns.resolve4(host).catch(() => []);
+
+/** Activates the request and links it to the shop; retires the shop's previous active domain. */
+async function activate(t, storeId, id, domain) {
+  await t.q(`UPDATE public.store_domain_requests SET status = 'active', updated_at = now() WHERE id = $1`, [id]);
+  await t.q('UPDATE public.platform_stores SET store_domain = $2 WHERE id = $1', [storeId, domain]);
+  await t.q(
+    `UPDATE public.store_domain_requests SET status = 'cancelled', admin_note = coalesce(admin_note, 'Remplacé par ' || $3), updated_at = now()
+      WHERE store_id = $1 AND status = 'active' AND id <> $2`, [storeId, id, domain]);
+}
 
 const OWNER_ROLES = ['owner', 'admin'];
 const STATUSES = ['pending', 'in_progress', 'active', 'rejected', 'cancelled'];
@@ -57,13 +77,44 @@ export default {
     return rows[0];
   },
 
+  /** domain_connect(p_store_id, p_domain) — seller links a domain they already bought anywhere. */
+  async domain_connect({ p_store_id, p_domain }, ctx) {
+    ctx.requireAuth();
+    await ctx.assertStoreAccess(p_store_id, OWNER_ROLES);
+    const domain = normalizeDomain(p_domain);
+    if (!DOMAIN_RE.test(domain) || domain.endsWith('e-commence.shop')) throw badRequest('Nom de domaine invalide');
+    const taken = await ctx.q(`SELECT store_id FROM public.store_domain_requests WHERE lower(domain) = $1 AND status IN ('pending','in_progress','active')`, [domain]);
+    if (taken.some((r) => r.store_id !== p_store_id)) throw badRequest('Ce domaine est déjà relié à une autre boutique');
+    if (taken.length) return null;
+    // Withdraw any other unfinished connection of this shop: one domain in progress at a time.
+    await ctx.q(`UPDATE public.store_domain_requests SET status = 'cancelled', updated_at = now() WHERE store_id = $1 AND status IN ('pending','in_progress')`, [p_store_id]);
+    const email = (await ctx.profile())?.email || 'unknown@e-commence.shop';
+    await ctx.q(
+      `INSERT INTO public.store_domain_requests (store_id, requested_by, domain, availability, already_owned, contact_email, status)
+       VALUES ($1,$2,$3,'taken',true,$4,'pending')`, [p_store_id, ctx.userId, domain, String(email).slice(0, 200)]);
+    return null;
+  },
+
+  /** domain_verify(p_store_id, p_id) → { ok, root, www } — checks DNS and activates the domain when it points here. */
+  async domain_verify({ p_store_id, p_id }, ctx) {
+    ctx.requireAuth();
+    await ctx.assertStoreAccess(p_store_id, OWNER_ROLES);
+    const req = await ctx.one(`SELECT id, domain, status FROM public.store_domain_requests WHERE id = $1 AND store_id = $2`, [p_id, p_store_id]);
+    if (!req || !['pending', 'in_progress', 'active'].includes(req.status)) throw badRequest('Domaine introuvable');
+    const [rootIps, wwwIps] = await Promise.all([resolve(req.domain), resolve(`www.${req.domain}`)]);
+    const v = dnsVerdict(rootIps, wwwIps, platformIps());
+    if (v.ok && req.status !== 'active') await ctx.tx((t) => activate(t, p_store_id, req.id, req.domain));
+    return { ...v, found: { root: rootIps, www: wwwIps }, expected: platformIps() };
+  },
+
   /** domain_request_cancel(p_store_id, p_id) — seller withdraws a pending request */
   async domain_request_cancel({ p_store_id, p_id }, ctx) {
     ctx.requireAuth();
     await ctx.assertStoreAccess(p_store_id, OWNER_ROLES);
     const rows = await ctx.q(
       `UPDATE public.store_domain_requests SET status = 'cancelled', updated_at = now()
-       WHERE id = $1 AND store_id = $2 AND status = 'pending' RETURNING id`, [p_id, p_store_id]);
+       WHERE id = $1 AND store_id = $2 AND status IN ('pending','in_progress','active') RETURNING domain`, [p_id, p_store_id]);
+    if (rows.length) await ctx.q('UPDATE public.platform_stores SET store_domain = NULL WHERE id = $1 AND lower(store_domain) = lower($2)', [p_store_id, rows[0].domain]);
     if (!rows.length) throw badRequest('Cette demande ne peut plus être annulée');
     return null;
   },
@@ -88,7 +139,7 @@ export default {
         [p_id, p_status, p_admin_note == null ? null : String(p_admin_note).slice(0, 1000)]);
       if (!rows.length) throw badRequest('Demande introuvable');
       const { store_id, domain } = rows[0];
-      if (p_status === 'active') await t.q('UPDATE public.platform_stores SET store_domain = $2 WHERE id = $1', [store_id, domain]);
+      if (p_status === 'active') await activate(t, store_id, p_id, domain);
       else await t.q('UPDATE public.platform_stores SET store_domain = NULL WHERE id = $1 AND lower(store_domain) = $2', [store_id, domain]);
       await t.q(
         `INSERT INTO public.admin_audit_logs (action, performed_by, target_store_id, details) VALUES ($1,$2,$3,$4)`,

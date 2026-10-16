@@ -1,5 +1,5 @@
 import { json, methodGuard } from './_shared/respond.js';
-import { decryptDeliveryCredentials, canEncryptDelivery, buildAuthHeaders, assertAccountAndStore } from './_shared/delivery.js';
+import { decryptDeliveryCredentials, canEncryptDelivery, buildAuthHeaders, assertAccountAndStore, deliveryResponseError, sendProviderRequest } from './_shared/delivery.js';
 
 export default async function cancelDeliveryShipment(req, res, ctx) {
   if (methodGuard(req, res)) return;
@@ -27,13 +27,15 @@ export default async function cancelDeliveryShipment(req, res, ctx) {
   try { credentials = decryptDeliveryCredentials(secret.credentials_ciphertext, secret.credentials_iv); }
   catch { return json(res, { error: 'Token non configuré' }, 400); }
 
-  const cancelUrl = `${provider.base_url}${provider.cancel_shipment_endpoint || '/cancel-orders'}`;
-  const headers = buildAuthHeaders(provider, credentials);
-  const payload = { barCodes: [shipment.tracking_number] };
-
-  const apiRes = await fetch(cancelUrl, { method: 'POST', headers, body: JSON.stringify(payload), signal: AbortSignal.timeout(15000) });
-  const data = await apiRes.json().catch(() => ({}));
+  // First Delivery: PUT /bulk-cancellation { barCodes } — only pending orders can be cancelled.
+  const isFirst = provider.code === 'first_delivery';
+  const payload = { ...(isFirst ? { __method: 'PUT' } : {}), barCodes: [shipment.tracking_number] };
+  const { res: apiRes, data } = await sendProviderRequest(provider, credentials, provider.cancel_shipment_endpoint || (isFirst ? '/bulk-cancellation' : '/cancel-orders'), payload, 15000);
   if (!apiRes.ok) return json(res, { error: `Erreur annulation API: HTTP ${apiRes.status}` }, 502);
+  if (!data || deliveryResponseError(data)) return json(res, { error: deliveryResponseError(data) || 'Réponse annulation invalide' }, 502);
+  if (Array.isArray(data.result) && !data.result.map(String).includes(String(shipment.tracking_number))) {
+    return json(res, { error: "Le transporteur n'a pas annulé ce colis (seuls les colis en attente peuvent l'être)." }, 409);
+  }
 
   await ctx.q(`UPDATE public.delivery_shipments SET status='cancelled', updated_at=now() WHERE id=$1`, [shipment_id]);
   await ctx.q(

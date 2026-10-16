@@ -62,7 +62,8 @@ export default {
       conds.push(`name ILIKE $${params.length}`);
     }
     return ctx.q(
-      `SELECT id, name, price, image_url, stock, status, sku
+      `SELECT id, name, price, image_url, stock, status, sku,
+              (SELECT s.currency FROM public.platform_stores s WHERE s.id = products.store_id) AS currency
        FROM public.products WHERE ${conds.join(' AND ')} ORDER BY name ASC`,
       params,
     );

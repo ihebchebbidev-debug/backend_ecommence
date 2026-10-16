@@ -25,6 +25,7 @@ import savePaymentIntegration from './save-payment-integration.js';
 import testPaymentGateway from './test-payment-gateway.js';
 import testStorePayment from './test-store-payment.js';
 import metaCapi from './meta-capi.js';
+import storefrontMetaEvent from './storefront-meta-event.js';
 import adminDeleteAuthUser from './admin-delete-auth-user.js';
 import whatsappRegister from './whatsapp-register.js';
 import whatsappWebhook from './whatsapp-webhook.js';
@@ -47,6 +48,7 @@ export const edgeFunctions = {
   'test-payment-gateway': { handler: testPaymentGateway, verifyJwt: true },
   'test-store-payment': { handler: testStorePayment, verifyJwt: true },
   'meta-capi': { handler: metaCapi, verifyJwt: true },
+  'storefront-meta-event': { handler: storefrontMetaEvent, verifyJwt: false },
   'admin-delete-auth-user': { handler: adminDeleteAuthUser, verifyJwt: true },
   'whatsapp-register': { handler: whatsappRegister, verifyJwt: true },
   'whatsapp-webhook': { handler: whatsappWebhook, verifyJwt: false },

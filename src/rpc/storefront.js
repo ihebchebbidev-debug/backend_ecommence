@@ -30,7 +30,7 @@ export default {
     return ctx.q(
       `SELECT key, value FROM public.store_settings
         WHERE store_id = $1
-          AND key IN ('meta_pixel_id','tiktok_pixel_id','snapchat_pixel_id','ga4_id')
+          AND key IN ('meta_pixel_id','tiktok_pixel_id','snapchat_pixel_id','ga4_id','gtm_container_id','pinterest_tag_id','linkedin_partner_id','cookie_banner_mode')
         ORDER BY key`,
       [p_store_id],
     );

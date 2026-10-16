@@ -1,5 +1,5 @@
 import { json, methodGuard } from './_shared/respond.js';
-import { decryptDeliveryCredentials, canEncryptDelivery, buildAuthHeaders, extractFirstMatch, mapStatus, assertAccountAndStore } from './_shared/delivery.js';
+import { decryptDeliveryCredentials, canEncryptDelivery, buildAuthHeaders, extractFirstMatch, mapStatus, assertAccountAndStore, deliveryResponseError, sendProviderRequest, deepReplace } from './_shared/delivery.js';
 
 const rateLimitMap = new Map();
 function checkRateLimit(storeId, providerCode) {
@@ -38,23 +38,18 @@ export default async function trackDeliveryShipment(req, res, ctx) {
   try { credentials = decryptDeliveryCredentials(secret.credentials_ciphertext, secret.credentials_iv); }
   catch { return json(res, { error: 'Token non configuré' }, 400); }
 
-  const trackingUrl = `${provider.base_url}${provider.track_shipment_endpoint || '/etat'}`;
-  const headers = buildAuthHeaders(provider, credentials);
+  const payload = provider.tracking_payload_template && Object.keys(provider.tracking_payload_template).length
+    ? deepReplace(provider.tracking_payload_template, { shipment, credentials })
+    : { barCode: shipment.tracking_number };
 
-  let payload;
-  if (provider.tracking_payload_template) {
-    payload = JSON.parse(JSON.stringify(provider.tracking_payload_template).replace(/\{\{shipment\.tracking_number\}\}/g, shipment.tracking_number));
-  } else {
-    payload = { barCode: shipment.tracking_number };
-  }
-
-  const apiRes = await fetch(trackingUrl, { method: 'POST', headers, body: JSON.stringify(payload), signal: AbortSignal.timeout(15000) });
-  const data = await apiRes.json().catch(() => ({}));
-  if (!apiRes.ok) return json(res, { error: `Erreur API: HTTP ${apiRes.status}` }, 502);
+  const { res: apiRes, data } = await sendProviderRequest(provider, credentials, provider.track_shipment_endpoint || '/etat', payload, 15000);
+  if (!apiRes.ok) return json(res, { error: deliveryResponseError(data) || `Erreur API: HTTP ${apiRes.status}` }, 502);
+  if (!data || !Object.keys(data).length || deliveryResponseError(data)) return json(res, { error: deliveryResponseError(data) || 'Réponse suivi invalide' }, 502);
 
   const m = provider.response_mapping || {};
-  const statusPaths = [m.status, 'result.state', 'result.etat', 'result.status', 'data.state', 'data.status', 'state', 'status'].filter(Boolean);
-  const rawStatus = extractFirstMatch(data, statusPaths) || 'in_transit';
+  const statusPaths = [m.status, 'result.state', 'result.etat', 'result.status', 'data.state', 'data.status', 'result_content.etat', 'TrackingResults.0.Value.0.UpdateCode', 'state', 'etat', 'status'].filter(Boolean);
+  const rawStatus = extractFirstMatch(data, statusPaths);
+  if (rawStatus == null) return json(res, { error: 'Aucun statut retourné par le transporteur' }, 502);
   const mappedStatus = mapStatus(provider.status_mapping || {}, rawStatus);
 
   await ctx.q(`UPDATE public.delivery_shipments SET status=$1, updated_at=now() WHERE id=$2`, [mappedStatus, shipment_id]);

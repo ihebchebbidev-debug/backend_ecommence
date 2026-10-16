@@ -53,6 +53,16 @@ app.use(requestLog);
 app.use(docsRouter);
 
 
+// Automatic https for seller domains: the web server asks before issuing a certificate.
+// 200 only for an active, linked shop domain (with or without www); never reveals which shop.
+app.get('/domain-allowed', async (req, res) => {
+  try {
+    const { default: domainsRpc } = await import('./rpc/domains.js');
+    const slug = await domainsRpc.store_slug_for_domain({ p_domain: String(req.query.domain || '') }, { q: (sql, p) => pool.query(sql, p).then((r) => r.rows) });
+    res.status(slug ? 200 : 404).end();
+  } catch { res.status(404).end(); }
+});
+
 app.get('/health', async (_req, res) => {
   try {
     await pool.query('SELECT 1');

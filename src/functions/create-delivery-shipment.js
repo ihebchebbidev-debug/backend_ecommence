@@ -35,9 +35,14 @@ export default async function createDeliveryShipment(req, res, ctx) {
   if (!integration.enabled || integration.status !== 'connected') return json(res, { error: 'Intégration non connectée' }, 400);
 
   const existing = await ctx.q(
-    'SELECT * FROM public.delivery_shipments WHERE order_id=$1 AND provider_id=$2',
-    [order_id, provider.id],
+    `SELECT * FROM public.delivery_shipments
+     WHERE order_id=$1 AND COALESCE(status,'') NOT IN ('cancelled','canceled','failed')
+     ORDER BY created_at DESC LIMIT 1`,
+    [order_id],
   ).then((r) => r[0]);
+  if (existing && existing.provider_id !== provider.id) {
+    return json(res, { error: 'Cette commande est déjà expédiée avec un autre transporteur. Annulez d’abord ce colis.', code: 'already_shipped' }, 409);
+  }
   if (existing) {
     return json(res, { success: true, shipment: { id: existing.id, external_shipment_id: existing.external_shipment_id, tracking_number: existing.tracking_number, tracking_url: existing.tracking_url, label_url: existing.label_url, status: existing.status, already_exists: true } });
   }
@@ -71,6 +76,10 @@ export default async function createDeliveryShipment(req, res, ctx) {
     }
     if (!order.locality_id) return json(res, { error: 'Localité First Delivery manquante. Veuillez choisir une localité valide.' }, 400);
   }
+
+  // An order already paid online must not be collected again at the door.
+  const paidOnline = order.payment_status === 'paid';
+  if (paidOnline) order.amount = 0;
 
   const orderData = {
     order_number: order.order_number, client_name: order.client_name, client_phone: order.client_phone || '',

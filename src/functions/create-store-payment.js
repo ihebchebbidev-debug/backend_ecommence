@@ -1,37 +1,7 @@
 // Port of supabase/functions/create-store-payment/index.ts (anon storefront checkout)
 import { json, methodGuard } from './_shared/respond.js';
-import crypto from 'node:crypto';
 
-const KEY_ENV_VAR = 'PAYMENT_CREDENTIALS_ENCRYPTION_KEY';
-
-function isProductionEnvironment() {
-  const env = (process.env.APP_ENV || process.env.ENVIRONMENT || '').toLowerCase();
-  return env === 'production';
-}
-
-function paymentEncryptionKey() {
-  const raw = process.env[KEY_ENV_VAR];
-  if (raw) {
-    const keyBytes = Buffer.from(raw.trim().replace(/^["']|["']$/g, ''), 'base64');
-    if (keyBytes.length !== 32) throw new Error(`Payment encryption key must decode to exactly 32 bytes (got ${keyBytes.length})`);
-    return keyBytes;
-  }
-  if (isProductionEnvironment()) throw new Error('Payment encryption key missing');
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
-  if (!serviceKey) throw new Error('Payment encryption key missing');
-  return crypto.createHash('sha256').update(`${serviceKey}::payment-credentials`, 'utf8').digest();
-}
-
-function decryptPaymentJson(ciphertextB64, ivB64) {
-  const key = paymentEncryptionKey();
-  const raw = Buffer.from(ciphertextB64, 'base64');
-  const tag = raw.subarray(raw.length - 16);
-  const body = raw.subarray(0, raw.length - 16);
-  const decipher = crypto.createDecipheriv('aes-256-gcm', key, Buffer.from(ivB64, 'base64'));
-  decipher.setAuthTag(tag);
-  const out = Buffer.concat([decipher.update(body), decipher.final()]).toString('utf8');
-  return JSON.parse(out);
-}
+import { decryptPaymentJson } from './_shared/paymentCrypto.js';
 
 export default async function createStorePayment(req, res, ctx) {
   if (methodGuard(req, res)) return;
@@ -50,7 +20,7 @@ export default async function createStorePayment(req, res, ctx) {
   if (amountTnd <= 0) return json(res, { error: 'Montant invalide' }, 400);
 
   const integration = await ctx.q(
-    'SELECT id, provider, credentials_encrypted, credentials_iv, is_active, connection_status FROM public.store_payment_integrations WHERE store_id=$1 AND is_active=true',
+    'SELECT id, provider, credentials_encrypted, credentials_iv, credentials_version, is_active, connection_status FROM public.store_payment_integrations WHERE store_id=$1 AND is_active=true',
     [store_id],
   ).then((r) => r[0]);
   if (!integration || !integration.is_active || integration.connection_status !== 'connected') {
@@ -60,8 +30,15 @@ export default async function createStorePayment(req, res, ctx) {
     return json(res, { error: 'Identifiants de paiement manquants' }, 500);
   }
 
+  // Gateways only charge the currencies they support; never relabel a USD order as TND.
+  const currency = String(order.currency || 'TND').trim().toUpperCase();
+  const supported = integration.provider === 'konnect' ? ['TND', 'EUR', 'USD'] : ['TND'];
+  if (!supported.includes(currency)) {
+    return json(res, { error: `Devise ${currency} non prise en charge par ${integration.provider}` }, 409);
+  }
+
   let creds;
-  try { creds = decryptPaymentJson(integration.credentials_encrypted, integration.credentials_iv); }
+  try { creds = decryptPaymentJson(integration.credentials_encrypted, integration.credentials_iv, integration.credentials_version); }
   catch { return json(res, { error: 'Erreur de déchiffrement des identifiants' }, 500); }
 
   await ctx.q(
@@ -82,8 +59,8 @@ export default async function createStorePayment(req, res, ctx) {
       headers: { 'x-api-key': apiKey, 'Content-Type': 'application/json' },
       body: JSON.stringify({
         receiverWalletId: walletId,
-        token: 'TND',
-        amount: Math.round(amountTnd * 1000),
+        token: currency,
+        amount: Math.round(amountTnd * (currency === 'TND' ? 1000 : 100)),
         type: 'immediate',
         description,
         acceptedPaymentMethods: ['wallet', 'bank_card', 'e-DINAR'],
@@ -108,6 +85,7 @@ export default async function createStorePayment(req, res, ctx) {
 
     const data = await konnectRes.json();
     const paymentRef = data.paymentRef || null;
+    if (!data.payUrl || !paymentRef) return json(res, { error: 'Konnect n’a pas renvoyé de lien de paiement' }, 502);
     if (paymentRef) {
       await ctx.q('UPDATE public.orders SET payment_ref=$1, updated_at=now() WHERE id=$2', [String(paymentRef), order_id]);
     }
@@ -140,11 +118,16 @@ export default async function createStorePayment(req, res, ctx) {
     }
 
     const data = await paymeeRes.json();
-    const paymentRef = data?.data?.reference || data?.data?.token || data?.reference || null;
+    // The Paymee webhook identifies the payment by its token (also used in the checksum).
+    const paymentRef = data?.data?.token || data?.token || data?.data?.reference || null;
+    const paymentUrl = data?.data?.payment_url || data?.payment_url || null;
+    if (data?.status === false || !paymentRef || !paymentUrl) {
+      return json(res, { error: `Paymee: ${data?.message || 'lien de paiement non renvoyé'}` }, 502);
+    }
     if (paymentRef) {
       await ctx.q('UPDATE public.orders SET payment_ref=$1, updated_at=now() WHERE id=$2', [String(paymentRef), order_id]);
     }
-    return json(res, { paymentUrl: data?.data?.payment_url || data?.payment_url || null, reference: paymentRef, provider: 'paymee' });
+    return json(res, { paymentUrl, reference: paymentRef, provider: 'paymee' });
   }
 
   return json(res, { error: 'Provider non supporté' }, 400);

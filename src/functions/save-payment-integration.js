@@ -1,52 +1,8 @@
 // Port of supabase/functions/save-payment-integration/index.ts
 import { json, methodGuard } from './_shared/respond.js';
-import crypto from 'node:crypto';
 
-const KEY_ENV_VAR = 'PAYMENT_CREDENTIALS_ENCRYPTION_KEY';
-const ENCRYPTION_VERSION = 'aes-gcm-v1';
-
-function isProductionEnvironment() {
-  const env = (process.env.APP_ENV || process.env.ENVIRONMENT || '').toLowerCase();
-  return env === 'production';
-}
-
-function paymentEncryptionKey() {
-  const raw = process.env[KEY_ENV_VAR];
-  if (raw) {
-    const keyBytes = Buffer.from(raw.trim().replace(/^["']|["']$/g, ''), 'base64');
-    if (keyBytes.length !== 32) throw new Error(`Payment encryption key must decode to exactly 32 bytes (got ${keyBytes.length})`);
-    return keyBytes;
-  }
-  if (isProductionEnvironment()) throw new Error('Payment encryption key missing');
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
-  if (!serviceKey) throw new Error('Payment encryption key missing');
-  return crypto.createHash('sha256').update(`${serviceKey}::payment-credentials`, 'utf8').digest();
-}
-
-export function canEncryptPaymentCredentials() {
-  if (process.env[KEY_ENV_VAR]) return true;
-  return !isProductionEnvironment();
-}
-
-export function encryptPaymentJson(data) {
-  const key = paymentEncryptionKey();
-  const iv = crypto.randomBytes(12);
-  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
-  const plain = Buffer.from(JSON.stringify(data), 'utf8');
-  const enc = Buffer.concat([cipher.update(plain), cipher.final(), cipher.getAuthTag()]);
-  return { ciphertext: enc.toString('base64'), iv: iv.toString('base64'), version: ENCRYPTION_VERSION };
-}
-
-export function decryptPaymentJson(ciphertextB64, ivB64) {
-  const key = paymentEncryptionKey();
-  const raw = Buffer.from(ciphertextB64, 'base64');
-  const tag = raw.subarray(raw.length - 16);
-  const body = raw.subarray(0, raw.length - 16);
-  const decipher = crypto.createDecipheriv('aes-256-gcm', key, Buffer.from(ivB64, 'base64'));
-  decipher.setAuthTag(tag);
-  const out = Buffer.concat([decipher.update(body), decipher.final()]).toString('utf8');
-  return JSON.parse(out);
-}
+import { canEncryptPaymentCredentials, encryptPaymentJson } from './_shared/paymentCrypto.js';
+export { canEncryptPaymentCredentials, encryptPaymentJson, decryptPaymentJson } from './_shared/paymentCrypto.js';
 
 export function maskPaymentCredentials(creds) {
   const result = {};
@@ -102,6 +58,7 @@ export default async function savePaymentIntegration(req, res, ctx) {
   if (hasNewCreds) encrypted = encryptPaymentJson(credentials);
 
   const hasCreds = hasNewCreds || !!existing?.credentials_encrypted;
+  if (is_active && !hasCreds) return json(res, { error: 'Identifiants de paiement requis' }, 400);
   const masked = hasNewCreds ? maskPaymentCredentials(credentials) : {};
 
   let connectionStatus;

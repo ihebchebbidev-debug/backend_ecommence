@@ -1,5 +1,5 @@
 import { json, methodGuard } from './_shared/respond.js';
-import { decryptDeliveryCredentials, canEncryptDelivery, buildAuthHeaders, assertAccountAndStore } from './_shared/delivery.js';
+import { decryptDeliveryCredentials, canEncryptDelivery, buildAuthHeaders, assertAccountAndStore, deliveryResponseError } from './_shared/delivery.js';
 
 function localizedError(status) {
   if (status === 401 || status === 403) return 'Token First Delivery invalide ou expiré. Veuillez générer un nouveau token depuis votre compte First Delivery > API.';
@@ -48,19 +48,25 @@ export default async function syncDeliveryLocalities(req, res, ctx) {
     return json(res, { error: localizedError(apiRes.status), status: apiRes.status }, 502);
   }
 
+  const data = await apiRes.json().catch(() => null);
+  const providerError = deliveryResponseError(data);
+  const localities = Array.isArray(data) ? data : Array.isArray(data?.result) ? data.result : Array.isArray(data?.data) ? data.data : null;
+  if (providerError || !localities) {
+    const message = providerError || 'Réponse de localités invalide';
+    await ctx.q(`UPDATE public.store_delivery_integrations SET status='error', last_error=$1, updated_at=now() WHERE id=$2`, [message, integration.id]);
+    return json(res, { ok: false, error: message }, 502);
+  }
   if (test_only) {
     await ctx.q(`UPDATE public.store_delivery_integrations SET status='connected', last_error=NULL, updated_at=now() WHERE id=$1`, [integration.id]);
     return json(res, { success: true, ok: true, synced: 0 });
   }
 
-  const data = await apiRes.json().catch(() => ({}));
-  const localities = Array.isArray(data) ? data : Array.isArray(data.result) ? data.result : Array.isArray(data.data) ? data.data : [];
   if (localities.length === 0) return json(res, { error: 'Aucune localité retournée par First Delivery' }, 502);
 
   let syncedCount = 0;
   for (const loc of localities) {
     const localityId = loc.locality_id ?? loc.id ?? loc.localityId;
-    if (localityId == null) continue;
+    if (localityId == null || !Number.isFinite(Number(localityId))) continue;
     try {
       await ctx.q(
         `INSERT INTO public.delivery_provider_localities (provider_code, locality_id, locality_name, delegation_name, governorate_name, raw_payload, updated_at)
@@ -71,6 +77,8 @@ export default async function syncDeliveryLocalities(req, res, ctx) {
       syncedCount++;
     } catch { /* skip failed rows, mirrors upsertErr check */ }
   }
+
+  if (syncedCount === 0) return json(res, { error: 'Aucune localité n’a pu être enregistrée', ok: false }, 502);
 
   await ctx.q(
     `UPDATE public.store_delivery_integrations SET localities_last_synced_at=now(), status='connected', last_error=NULL, updated_at=now() WHERE id=$1`,
