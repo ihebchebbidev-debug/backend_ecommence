@@ -14,15 +14,27 @@ export function dnsVerdict(rootIps, wwwIps, allowed) {
 export const ownershipRecord = (id) => `e-commence-verify=${id}`;
 export async function checkDomainDns(domain, id) {
   const resolver = new dns.Resolver({ timeout: 2000, tries: 2 });
-  const addresses = async (host) => (await Promise.all([
-    resolver.resolve4(host).catch(() => []), resolver.resolve6(host).catch(() => []),
-  ])).flat();
+  // Missing address families are valid; timeouts/SERVFAIL are not proof that
+  // no conflicting address exists. Never activate from a partial lookup.
+  const addresses = async (host) => {
+    const lookup = async (query) => {
+      try { return { ips: await query(), complete: true }; }
+      catch (err) { return { ips: [], complete: ['ENODATA', 'ENOTFOUND'].includes(err?.code) }; }
+    };
+    const results = await Promise.all([
+      lookup(() => resolver.resolve4(host)), lookup(() => resolver.resolve6(host)),
+    ]);
+    return { ips: results.flatMap((r) => r.ips), complete: results.every((r) => r.complete) };
+  };
   const [root, www, txt] = await Promise.all([
     addresses(domain), addresses(`www.${domain}`), resolver.resolveTxt(`_e-commence.${domain}`).catch(() => []),
   ]);
-  const verdict = dnsVerdict(root, www, platformIps());
+  const verdict = dnsVerdict(root.ips, www.ips, platformIps());
+  verdict.root = verdict.root && root.complete;
+  verdict.www = verdict.www && www.complete;
+  verdict.ok = verdict.root && verdict.www;
   const ownership = txt.some((chunks) => chunks.join('') === ownershipRecord(id));
-  return { ...verdict, ok: verdict.ok && ownership, ownership, found: { root, www, txt: txt.map((chunks) => chunks.join('')).sort() }, expected: platformIps(), expected_proof: ownershipRecord(id) };
+  return { ...verdict, ok: verdict.ok && ownership, ownership, found: { root: root.ips, www: www.ips, txt: txt.map((chunks) => chunks.join('')).sort() }, expected: platformIps(), expected_proof: ownershipRecord(id) };
 }
 
 /** Activates the request and links it to the shop; retires the shop's previous active domain. */

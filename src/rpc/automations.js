@@ -3,7 +3,7 @@ import { badRequest, forbidden } from '../lib/errors.js';
 import { id, permission } from '../lib/commerce.js';
 import { getMessagingSettings, smsReady, smtpReady } from '../lib/messaging.js';
 import { canSendMail } from '../lib/mailer.js';
-import { TRIGGERS, CHANNELS, sendAutomation, emailOk } from '../lib/storeAutomations.js';
+import { TRIGGERS, CHANNELS, MAX_ATTEMPTS, sendAutomation, emailOk } from '../lib/storeAutomations.js';
 import { normalizePhone } from '../auth/otp.js';
 
 const PERM = 'canManageAutomations';
@@ -33,7 +33,7 @@ export default {
   async store_automations_list({ p_store_id }, ctx) {
     await permission(ctx, p_store_id, PERM);
     const rows = await ctx.q('SELECT * FROM public.store_automations WHERE store_id=$1 ORDER BY created_at', [p_store_id]);
-    const pending = await ctx.one('SELECT count(*)::int AS n FROM public.store_automation_runs WHERE store_id=$1 AND sent_at IS NULL AND skipped IS NULL', [p_store_id]);
+    const pending = await ctx.one('SELECT count(*)::int AS n FROM public.store_automation_runs WHERE store_id=$1 AND sent_at IS NULL AND skipped IS NULL AND attempts < $2', [p_store_id, MAX_ATTEMPTS]);
     return { automations: rows, pending: pending?.n ?? 0, ...(await channelStatus()) };
   },
 
