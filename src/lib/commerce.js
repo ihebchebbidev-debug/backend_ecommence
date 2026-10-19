@@ -86,7 +86,7 @@ export async function priceCheckout(db, storeId, items, currency, code = '', loc
   const stock = new Map();
   // Stable lock order avoids product deadlocks between competing baskets.
   for (const item of [...items].sort((a,b) => String(a.product_id).localeCompare(String(b.product_id)))) {
-    const product = await db.one(`SELECT id, name, category_id, price::text, delivery_fee::text, stock FROM public.products WHERE id=$1 AND store_id=$2${lock ? ' FOR UPDATE' : ''}`, [id(item.product_id),storeId]);
+    const product = await db.one(`SELECT id, name, category_id, price::text, delivery_fee::text, stock FROM public.products WHERE id=$1 AND store_id=$2 AND coalesce(status,'active') <> 'deleted'${lock ? ' FOR UPDATE' : ''}`, [id(item.product_id),storeId]);
     if (!product) throw badRequest('Product unavailable');
     let bundle = null;
     if (item.bundle_id) {

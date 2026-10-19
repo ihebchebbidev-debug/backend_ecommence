@@ -47,6 +47,11 @@ export default {
        RETURNING id`,
       [member.id, member.store_id, member.name, member.role, member.permissions],
     );
+    // Sign-in history for the owner's Équipe → Activité page; never blocks the login.
+    await ctx.q('UPDATE public.team_members SET last_login_at = now() WHERE id = $1', [member.id]).catch(() => {});
+    await ctx.q(`INSERT INTO public.activity_log (store_id, team_member_id, user_name, action, entity_type, details, ip, created_at)
+      VALUES ($1,$2,$3,'login','team_member',$4,$5,now())`,
+      [member.store_id, member.id, member.name, `Connexion (${member.role || 'membre'})`, ctx.requestIp || null]).catch(() => {});
     return {
       session_id: session.id,
       store_id: member.store_id,
