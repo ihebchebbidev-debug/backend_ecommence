@@ -18,6 +18,7 @@ import { seed } from './db/seed.js';
 import { schemaDrift } from './db/schemaModel.js';
 import { docsRouter } from './docs/router.js';
 import { startAutomationWorker } from './lib/automationWebhooks.js';
+import { checkUnsubscribeToken } from './lib/marketing.js';
 
 const log = createLogger('server');
 
@@ -90,6 +91,19 @@ app.get('/health/schema', async (_req, res, next) => {
 
 // Bearer tokens that fail verification must be rejected before any data access.
 const rejectBadJwt = (req, _res, next) => next(req.authError || undefined);
+
+// One-click unsubscribe from seller email campaigns (link is HMAC-signed per recipient).
+app.all('/email-unsubscribe', async (req, res) => {
+  const r = String(req.query.r || ''), t = String(req.query.t || '');
+  const page = (msg) => res.type('html').send(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width"><body style="font-family:system-ui;max-width:480px;margin:80px auto;text-align:center;color:#111"><h2>${msg}</h2></body>`);
+  if (!/^[0-9a-f-]{36}$/i.test(r) || !checkUnsubscribeToken(r, t)) return res.status(400) && page('Lien invalide');
+  try {
+    const rec = (await pool.query('SELECT store_id, email FROM public.store_email_recipients WHERE id=$1', [r])).rows[0];
+    if (!rec) return page('Lien expiré');
+    await pool.query('INSERT INTO public.store_email_unsubscribes(store_id, email) VALUES ($1,$2) ON CONFLICT DO NOTHING', [rec.store_id, rec.email]);
+    return page('Vous êtes désinscrit(e). Vous ne recevrez plus ces e-mails.');
+  } catch { return res.status(500) && page('Erreur, réessayez plus tard'); }
+});
 
 app.use('/auth/v1', authRouter);
 app.use('/rest/v1/rpc', rejectBadJwt, rpcRouter);

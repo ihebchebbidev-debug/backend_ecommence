@@ -30,6 +30,10 @@ import domainsRpc from './domains.js';
 import messagingRpc from './messaging.js';
 import automationsRpc from './automations.js';
 import loyaltyRpc from './loyalty.js';
+import marketingRpc from './marketing.js';
+
+// Loyalty lives in loyalty.js; only the email marketing RPCs come from marketing.js.
+const emailMarketingRpc = Object.fromEntries(Object.entries(marketingRpc).filter(([k]) => k.startsWith('email_')));
 
 export const rpcRegistry = {
   ...authRpc,
@@ -53,6 +57,7 @@ export const rpcRegistry = {
   ...messagingRpc,
   ...automationsRpc,
   ...loyaltyRpc,
+  ...emailMarketingRpc,
 };
 
 export const rpcRouter = express.Router();

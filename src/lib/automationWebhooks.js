@@ -1,4 +1,5 @@
 import { processDueRuns } from './storeAutomations.js';
+import { processCampaigns } from './marketing.js';
 // Delivers order events to seller Zapier / Make webhooks from the automation_events outbox.
 export const WEBHOOK_HOSTS = { zapier: ['hooks.zapier.com'], make: ['hook.eu1.make.com', 'hook.eu2.make.com', 'hook.us1.make.com', 'hook.us2.make.com', 'hook.make.com', 'hook.integromat.com'] };
 
@@ -48,7 +49,7 @@ export function startAutomationWorker(q, log, everyMs = 15000) {
   let running = false;
   const tick = async () => {
     if (running) return; running = true;
-    try { await deliverPending(q, log); await processDueRuns(q, log); } catch (e) { log?.warn?.('automation webhook worker failed', { message: e.message }); }
+    try { await deliverPending(q, log); await processDueRuns(q, log); await processCampaigns(q, log); } catch (e) { log?.warn?.('automation webhook worker failed', { message: e.message }); }
     finally { running = false; }
   };
   const t = setInterval(tick, everyMs); t.unref?.();
