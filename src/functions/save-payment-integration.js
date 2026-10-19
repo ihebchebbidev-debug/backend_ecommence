@@ -19,6 +19,7 @@ const PROVIDER_FIELDS = {
   paymee: ['api_key'],
   flouci: ['app_public', 'app_secret'],
   stripe: ['secret_key'],
+  clictopay: ['username', 'password'],
 };
 
 // Cheap format checks so obvious paste mistakes fail at save time.

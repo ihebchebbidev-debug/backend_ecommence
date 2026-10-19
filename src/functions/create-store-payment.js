@@ -2,6 +2,7 @@
 import { json, methodGuard } from './_shared/respond.js';
 
 import { decryptPaymentJson } from './_shared/paymentCrypto.js';
+import { konnectBase, paymeeBase, FLOUCI_BASE, clictopayCall } from './_shared/storeGateways.js';
 
 export const STRIPE_CURRENCIES = ['EUR', 'USD', 'GBP', 'CAD', 'CHF', 'MAD', 'DZD', 'AED', 'SAR', 'QAR'];
 
@@ -18,7 +19,9 @@ export default async function createStorePayment(req, res, ctx) {
   if (!order_id || !store_id || !successUrl || !failUrl) return json(res, { error: 'Paramètres manquants' }, 400);
 
   const order = await ctx.q(
-    'SELECT id, order_number, store_id, amount, currency, status, payment_status, client_name, client_phone FROM public.orders WHERE id=$1',
+    `SELECT o.id, o.order_number, o.store_id, o.amount, o.currency, o.status, o.payment_status, o.client_name, o.client_phone,
+            (SELECT c.email FROM public.clients c WHERE c.id = o.client_id) AS client_email
+       FROM public.orders o WHERE o.id=$1`,
     [order_id],
   ).then((r) => r[0]);
   if (!order) return json(res, { error: 'Commande introuvable' }, 404);
@@ -49,6 +52,7 @@ export default async function createStorePayment(req, res, ctx) {
     konnect: ['TND', 'EUR', 'USD'],
     paymee: ['TND'],
     flouci: ['TND'],
+    clictopay: ['TND'],
     // Stripe does not support TND; sellers selling abroad use these.
     stripe: STRIPE_CURRENCIES,
   };
@@ -74,7 +78,7 @@ export default async function createStorePayment(req, res, ctx) {
     const walletId = creds.receiver_wallet_id || '';
     if (!apiKey || !walletId) return json(res, { error: 'Configuration Konnect incomplète' }, 500);
 
-    const konnectRes = await fetch('https://api.konnect.network/api/v2/payments/init-payment', {
+    const konnectRes = await fetch(`${konnectBase(creds)}/payments/init-payment`, {
       method: 'POST',
       headers: { 'x-api-key': apiKey, 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -89,11 +93,12 @@ export default async function createStorePayment(req, res, ctx) {
         addPaymentFeesToAmount: true,
         firstName: (order.client_name || '').split(' ')[0] || '',
         lastName: (order.client_name || '').split(' ').slice(1).join(' ') || '',
-        email: '',
+        ...(order.client_email ? { email: order.client_email } : {}),
+        ...(order.client_phone ? { phoneNumber: String(order.client_phone).replace(/\D/g, '').slice(-8) } : {}),
         orderId: order_id,
         webhook,
-        successUrl: `${successUrl}?order=${order_id}&status=success`,
-        failUrl: `${failUrl}?order=${order_id}&status=failed`,
+        successUrl: withParams(successUrl, { order: order_id, status: 'success' }),
+        failUrl: withParams(failUrl, { order: order_id, status: 'failed' }),
         theme: 'light',
       }),
     });
@@ -116,7 +121,7 @@ export default async function createStorePayment(req, res, ctx) {
     const apiKey = creds.api_key || '';
     if (!apiKey) return json(res, { error: 'Configuration Paymee incomplète' }, 500);
 
-    const paymeeRes = await fetch('https://api.paymee.tn/api/v1/payments/create', {
+    const paymeeRes = await fetch(`${paymeeBase(creds)}/payments/create`, {
       method: 'POST',
       headers: { Authorization: `Token ${apiKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -124,11 +129,13 @@ export default async function createStorePayment(req, res, ctx) {
         note: description,
         first_name: (order.client_name || '').split(' ')[0] || '',
         last_name: (order.client_name || '').split(' ').slice(1).join(' ') || '',
-        email: '',
+        // Paymee requires an email; shops that don't collect one use a no-reply address.
+        email: order.client_email || `client+${order.order_number}@noreply.tn`,
         phone: order.client_phone || '',
-        return_url: `${successUrl}?order=${order_id}&status=success`,
-        cancel_url: `${failUrl}?order=${order_id}&status=failed`,
+        return_url: withParams(successUrl, { order: order_id, status: 'success' }),
+        cancel_url: withParams(failUrl, { order: order_id, status: 'failed' }),
         webhook_url: webhook,
+        order_id: String(order_id),
       }),
     });
 
@@ -154,12 +161,12 @@ export default async function createStorePayment(req, res, ctx) {
     const pub = creds.app_public || '';
     const sec = creds.app_secret || '';
     if (!pub || !sec) return json(res, { error: 'Configuration Flouci incomplète' }, 500);
-    const r = await fetch('https://developers.flouci.com/api/v2/generate_payment', {
+    const r = await fetch(`${FLOUCI_BASE}/generate_payment`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${pub}:${sec}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
         amount: String(Math.round(amountTnd * 1000)), // millimes
-        accept_card: 'true',
+        accept_card: true,
         session_timeout_secs: 1200,
         success_link: withParams(successUrl, { order: order_id, status: 'success' }),
         fail_link: withParams(failUrl, { order: order_id, status: 'failed' }),
@@ -205,6 +212,25 @@ export default async function createStorePayment(req, res, ctx) {
     }
     await ctx.q('UPDATE public.orders SET payment_ref=$1, updated_at=now() WHERE id=$2', [String(data.id), order_id]);
     return json(res, { paymentUrl: data.url, reference: data.id, provider: 'stripe' });
+  }
+
+  if (integration.provider === 'clictopay') {
+    if (!creds.username || !creds.password) return json(res, { error: 'Configuration ClicToPay incomplète' }, 500);
+    // ClicToPay needs a unique orderNumber per attempt (max 32 chars); amount in millimes, currency 788 = TND.
+    const { ok, status, data } = await clictopayCall(creds, 'register.do', {
+      orderNumber: `${order.order_number}-${Date.now().toString(36)}`.slice(0, 32),
+      amount: String(Math.round(amountTnd * 1000)),
+      currency: '788',
+      language: 'fr',
+      description,
+      returnUrl: withParams(successUrl, { order: order_id, status: 'success' }),
+      failUrl: withParams(failUrl, { order: order_id, status: 'failed' }),
+    });
+    if (!ok || !data.orderId || !data.formUrl) {
+      return json(res, { error: `ClicToPay${data?.errorMessage ? `: ${data.errorMessage}` : ` HTTP ${status}`}` }, 502);
+    }
+    await ctx.q('UPDATE public.orders SET payment_ref=$1, updated_at=now() WHERE id=$2', [String(data.orderId), order_id]);
+    return json(res, { paymentUrl: data.formUrl, reference: data.orderId, provider: 'clictopay' });
   }
 
   return json(res, { error: 'Provider non supporté' }, 400);

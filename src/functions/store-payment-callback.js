@@ -3,6 +3,7 @@ import { json } from './_shared/respond.js';
 import crypto from 'node:crypto';
 
 import { decryptPaymentJson } from './_shared/paymentCrypto.js';
+import { konnectBase, paymeeBase, FLOUCI_BASE, clictopayCall } from './_shared/storeGateways.js';
 
 function timingSafeEqualStr(a, b) {
   if (a.length !== b.length) return false;
@@ -26,6 +27,12 @@ export default async function storePaymentCallback(req, res, ctx) {
   const stripeSession = body?.object === 'event' ? body?.data?.object?.id : null;
   if (body?.object === 'event' && !String(stripeSession || '').startsWith('cs_')) {
     return json(res, { ok: true, ignored: true }); // events we don't use
+  }
+  // Shopper back from the gateway: use the reference we stored; the provider is re-asked below.
+  if (body.return_check && body.order_id && !body.token && !body.payment_id) {
+    const o = await ctx.q('SELECT payment_ref FROM public.orders WHERE id=$1', [String(body.order_id)]).then((r) => r[0]).catch(() => null);
+    if (!o?.payment_ref) return json(res, { ok: false, message: 'Aucun paiement en cours' }, 404);
+    body = { ...body, payment_ref: o.payment_ref };
   }
   const paymentRef = stripeSession || body.payment_id || body.payment_ref || body.paymentRef || body.id || body.reference || body.token || null;
   if (!paymentRef) return json(res, { ok: false, message: 'payment_ref manquant' }, 400);
@@ -75,7 +82,7 @@ export default async function storePaymentCallback(req, res, ctx) {
   if (provider === 'konnect') {
     const apiKey = creds.api_key || '';
     if (!apiKey) return json(res, { ok: false, message: 'Clé Konnect manquante' }, 500);
-    const r = await fetch(`https://api.konnect.network/api/v2/payments/${paymentRef}`, {
+    const r = await fetch(`${konnectBase(creds)}/payments/${encodeURIComponent(paymentRef)}`, {
       method: 'GET',
       headers: { 'x-api-key': apiKey, 'Content-Type': 'application/json' },
     });
@@ -94,6 +101,15 @@ export default async function storePaymentCallback(req, res, ctx) {
   } else if (provider === 'paymee') {
     const apiKey = creds.api_key || '';
     if (!apiKey) return json(res, { ok: false, message: 'Clé Paymee manquante' }, 500);
+    if (!body.check_sum) {
+      // Return path (no signed webhook): ask Paymee for the real status.
+      const r = await fetch(`${paymeeBase(creds)}/payments/${encodeURIComponent(paymentRef)}/check`, {
+        headers: { Authorization: `Token ${apiKey}` }, signal: AbortSignal.timeout(15000),
+      });
+      if (!r.ok) return json(res, { ok: false, message: `Paymee HTTP ${r.status}` }, 502);
+      const d = await r.json().catch(() => ({}));
+      body = { ...body, payment_status: d?.data?.payment_status, amount: d?.data?.amount, check_sum: md5hex(`${paymentRef}${d?.data?.payment_status ? 1 : 0}${apiKey}`) };
+    }
     const psRaw = body.payment_status;
     const psBool = psRaw === true || psRaw === 1 || psRaw === '1' || String(psRaw).toLowerCase() === 'true';
     const psNum = psBool ? 1 : 0;
@@ -111,7 +127,7 @@ export default async function storePaymentCallback(req, res, ctx) {
     const pub = creds.app_public || '';
     const sec = creds.app_secret || '';
     if (!pub || !sec) return json(res, { ok: false, message: 'Clés Flouci manquantes' }, 500);
-    const r = await fetch(`https://developers.flouci.com/api/v2/verify_payment/${encodeURIComponent(paymentRef)}`, {
+    const r = await fetch(`${FLOUCI_BASE}/verify_payment/${encodeURIComponent(paymentRef)}`, {
       headers: { Authorization: `Bearer ${pub}:${sec}` },
       signal: AbortSignal.timeout(15000),
     });
@@ -141,6 +157,15 @@ export default async function storePaymentCallback(req, res, ctx) {
     gatewayStatus = s.payment_status === 'paid' ? 'completed' : s.status === 'expired' ? 'expired' : 'pending';
     gatewayAmountTnd = Number(s.amount_total || 0) / 100;
     gatewayRef = s.id;
+  } else if (provider === 'clictopay') {
+    if (!creds.username || !creds.password) return json(res, { ok: false, message: 'Identifiants ClicToPay manquants' }, 500);
+    const { ok, status, data } = await clictopayCall(creds, 'getOrderStatusExtended.do', { orderId: String(paymentRef), language: 'fr' });
+    if (!ok) return json(res, { ok: false, message: `ClicToPay HTTP ${status}` }, 502);
+    // orderStatus: 2 = paid, 3 = reversed, 4 = refunded, 6 = declined; 0/1 still in progress.
+    const st = Number(data.orderStatus);
+    gatewayStatus = st === 2 ? 'completed' : [3, 4, 6].includes(st) ? 'failed' : 'pending';
+    gatewayAmountTnd = Number(data.amount || 0) / 1000;
+    gatewayRef = paymentRef;
   } else {
     return json(res, { ok: false, message: 'Provider non supporté' }, 400);
   }

@@ -1,6 +1,7 @@
 // Port of supabase/functions/test-store-payment/index.ts
 import { json, methodGuard } from './_shared/respond.js';
 import { decryptPaymentJson } from './_shared/paymentCrypto.js';
+import { konnectBase, paymeeBase, FLOUCI_BASE, clictopayCall } from './_shared/storeGateways.js';
 
 export default async function testStorePayment(req, res, ctx) {
   if (methodGuard(req, res)) return;
@@ -10,7 +11,7 @@ export default async function testStorePayment(req, res, ctx) {
   const provider = body.provider;
   if (!store_id || !provider) return json(res, { ok: false, message: 'Paramètres manquants' }, 400);
 
-  if (!['konnect', 'paymee', 'flouci', 'stripe'].includes(provider)) return json(res, { ok: false, message: 'Provider non supporté' }, 400);
+  if (!['konnect', 'paymee', 'flouci', 'stripe', 'clictopay'].includes(provider)) return json(res, { ok: false, message: 'Provider non supporté' }, 400);
 
   if (!ctx.userId) return json(res, { ok: false, message: 'Non authentifié' }, 401);
 
@@ -52,7 +53,7 @@ export default async function testStorePayment(req, res, ctx) {
       message = 'Clé API Konnect manquante';
     } else {
       try {
-        const apiRes = await fetch('https://api.konnect.network/api/v2/wallets', {
+        const apiRes = await fetch(`${konnectBase(creds)}/wallets/${encodeURIComponent(creds.receiver_wallet_id || '')}`, {
           method: 'GET',
           headers: { 'x-api-key': apiKey },
           signal: AbortSignal.timeout(15000),
@@ -72,11 +73,17 @@ export default async function testStorePayment(req, res, ctx) {
     if (!apiKey) {
       message = 'Clé API Paymee manquante';
     } else {
-      // Paymee has no credential-only probe here: format is not a live connection test.
-      const validFormat = apiKey.length >= 10;
-      message = validFormat ? 'Clé enregistrée ; connexion Paymee non vérifiée. Un paiement sandbox est requis.' : 'Clé Paymee invalide';
-      await ctx.q(`UPDATE public.store_payment_integrations SET connection_status=$1, last_tested_at=now() WHERE id=$2`, [validFormat ? 'configured' : 'error', integration.id]);
-      return json(res, { ok: false, message, status: validFormat ? 'configured' : 'error', verified: false });
+      // Checking an unknown token authenticates the key first: 401/403 means a wrong token.
+      try {
+        const r = await fetch(`${paymeeBase(creds)}/payments/connection-test/check`, {
+          headers: { Authorization: `Token ${apiKey}` }, signal: AbortSignal.timeout(15000),
+        });
+        if (r.status === 401 || r.status === 403) message = 'Token Paymee refusé (vérifiez le mode test/production)';
+        else if (r.status >= 500) message = `Paymee indisponible (HTTP ${r.status}), réessayez plus tard`;
+        else { ok = true; message = 'Token Paymee accepté'; }
+      } catch (e) {
+        message = `Erreur réseau: ${e instanceof Error ? e.message : 'unknown'}`;
+      }
     }
   } else if (provider === 'flouci') {
     const pub = creds.app_public || '';
@@ -87,7 +94,7 @@ export default async function testStorePayment(req, res, ctx) {
       // Flouci has no dedicated "who am I" call: verifying an unknown payment id
       // still authenticates the keys first, so 401/403 means wrong keys.
       try {
-        const r = await fetch('https://developers.flouci.com/api/v2/verify_payment/connection-test', {
+        const r = await fetch(`${FLOUCI_BASE}/verify_payment/connection-test`, {
           headers: { Authorization: `Bearer ${pub}:${sec}` },
           signal: AbortSignal.timeout(15000),
         });
@@ -113,6 +120,22 @@ export default async function testStorePayment(req, res, ctx) {
           const d = await r.json().catch(() => ({}));
           message = `Stripe HTTP ${r.status}${d?.error?.message ? `: ${d.error.message}` : ''}`;
         }
+      } catch (e) {
+        message = `Erreur réseau: ${e instanceof Error ? e.message : 'unknown'}`;
+      }
+    }
+  }
+
+  if (provider === 'clictopay') {
+    if (!creds.username || !creds.password) message = 'Identifiants ClicToPay manquants';
+    else {
+      try {
+        // A status request for an unknown order: errorCode 5 = access denied (bad login), 6 = unknown order (login OK).
+        const { data } = await clictopayCall(creds, 'getOrderStatusExtended.do', { orderId: '00000000-0000-0000-0000-000000000000' });
+        const code = Number(data.errorCode);
+        if (code === 5) message = 'Identifiants ClicToPay refusés (vérifiez le mode test/production)';
+        else if (code === 6 || code === 0) { ok = true; message = 'Connexion ClicToPay réussie'; }
+        else message = `ClicToPay: ${data.errorMessage || 'réponse inattendue'}`;
       } catch (e) {
         message = `Erreur réseau: ${e instanceof Error ? e.message : 'unknown'}`;
       }
