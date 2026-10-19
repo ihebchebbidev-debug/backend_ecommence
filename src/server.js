@@ -23,6 +23,9 @@ import { checkUnsubscribeToken } from './lib/marketing.js';
 const log = createLogger('server');
 
 export const app = express();
+// Behind Caddy/nginx/Docker the socket address is the proxy; trust private-network hops so req.ip is the
+// real shopper (needed for IP blacklist, per-IP order limits and rate limits). Override with TRUST_PROXY.
+app.set('trust proxy', process.env.TRUST_PROXY && !/^(true|\*)$/i.test(process.env.TRUST_PROXY) ? (/^\d+$/.test(process.env.TRUST_PROXY) ? Number(process.env.TRUST_PROXY) : process.env.TRUST_PROXY) : 'loopback, linklocal, uniquelocal');
 
 app.disable('x-powered-by');
 // Any origin is allowed. The origin is reflected (not "*") so that credentialed

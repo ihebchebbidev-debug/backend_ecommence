@@ -1,5 +1,6 @@
 import { ALL_PLANS_UNLOCKED } from './billing.js';
 // SQL RPC functions: orders (spec 3.3).
+import { parseLimits, limitViolation, LIMIT_KEYS } from '../lib/protection.js';
 import { createHash } from 'node:crypto';
 import { badRequest, forbidden } from '../lib/errors.js';
 import { id, text, couponCode, priceCheckout, major } from '../lib/commerce.js';
@@ -318,7 +319,8 @@ export default {
     const code = couponCode(p_coupon_code);
     const fingerprint = createHash('sha256').update(JSON.stringify([items, code, client.phone])).digest('hex');
 
-    return ctx.tx(async (t) => {
+    const BLOCKED = Symbol('blocked');
+    const result = await ctx.tx(async (t) => {
       // Serialize per shop: order numbers, coupon caps and stock stay consistent.
       await t.one('SELECT id FROM public.platform_stores WHERE id = $1 FOR UPDATE', [p_store_id]);
       if (requestId) {
@@ -336,9 +338,27 @@ export default {
              OR EXISTS (SELECT 1 FROM public.ip_blacklist WHERE store_id = $1 AND $3::text IS NOT NULL AND trim(ip_address) = $3) AS hit`,
         [p_store_id, phoneDigits, ctx.requestIp ? String(ctx.requestIp).replace(/^::ffff:/, '') : null],
       );
-      if (blocked?.hit) {
-        if (ctx.requestIp) await t.q('UPDATE public.ip_blacklist SET blocked_orders = coalesce(blocked_orders,0) + 1 WHERE store_id = $1 AND trim(ip_address) = $2', [p_store_id, String(ctx.requestIp).replace(/^::ffff:/, '')]);
-        throw forbidden('Commande impossible depuis ce numéro ou cet appareil', { code: 'ORDER_BLOCKED' });
+      if (blocked?.hit) return BLOCKED; // counted after the transaction so the rollback can't undo it
+
+      // Customers marked "blacklist" in Clients are refused too (same 8-digit phone match).
+      const buyerIp = ctx.requestIp ? String(ctx.requestIp).replace(/^::ffff:/, '').slice(0, 64) : null;
+      if (phoneDigits) {
+        const bad = await t.one(`SELECT 1 AS hit FROM public.clients WHERE store_id=$1 AND status='blacklist'
+          AND right(regexp_replace(coalesce(phone,''), '\\D', '', 'g'), 8) = $2 LIMIT 1`, [p_store_id, phoneDigits]);
+        if (bad) throw forbidden('Commande impossible depuis ce numéro ou cet appareil', { code: 'ORDER_BLOCKED' });
+      }
+      const limits = parseLimits(await t.q(`SELECT key, value FROM public.store_settings WHERE store_id=$1 AND key = ANY($2)`, [p_store_id, LIMIT_KEYS]));
+      if (Object.keys(limits).length) {
+        const st = await t.one(`SELECT
+            count(*) FILTER (WHERE $2 <> '' AND right(regexp_replace(coalesce(client_phone,''), '\\D', '', 'g'), 8) = $2 AND created_at > now() - interval '24 hours')::int AS phone24h,
+            count(*) FILTER (WHERE $3::text IS NOT NULL AND client_ip = $3 AND created_at > now() - interval '24 hours')::int AS ip24h,
+            count(*) FILTER (WHERE $2 <> '' AND right(regexp_replace(coalesce(client_phone,''), '\\D', '', 'g'), 8) = $2 AND status = 'pending')::int AS pending,
+            extract(epoch FROM now() - max(created_at) FILTER (WHERE $2 <> '' AND right(regexp_replace(coalesce(client_phone,''), '\\D', '', 'g'), 8) = $2)) / 3600 AS hours_since_last
+          FROM public.orders WHERE store_id=$1 AND coalesce(status,'') NOT ILIKE 'cancel%' AND created_at > now() - interval '30 days'`,
+          [p_store_id, phoneDigits, buyerIp]);
+        const msg = limitViolation(limits, { phone24h: st?.phone24h, ip24h: st?.ip24h, pending: st?.pending,
+          hoursSinceLast: st?.hours_since_last == null ? null : Number(st.hours_since_last) });
+        if (msg) throw forbidden(msg, { code: 'ORDER_LIMIT' });
       }
 
       const quote = await priceCheckout(t, p_store_id, items, p_currency, code, true);
@@ -374,8 +394,8 @@ export default {
            product_id, product_name, quantity, amount, delivery_fee, currency, status,
            bundle_id, bundle_name, bundle_label, bundle_price, bundle_quantity,
            payment_provider, address, city, region, merchandise_subtotal, discount_amount,
-           coupon_code, checkout_request_id, checkout_fingerprint, notes, created_at, updated_at
-         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'pending',$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27, now(), now())
+           coupon_code, checkout_request_id, checkout_fingerprint, notes, client_ip, created_at, updated_at
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'pending',$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28, now(), now())
          RETURNING id, order_number, amount`,
         [
           p_store_id, orderNumber, clientRow.id, client.name, client.phone, client.phone2,
@@ -385,7 +405,7 @@ export default {
           text(p_payment_provider || p_payment_method || '', 60),
           client.address, client.city, client.region,
           quote.subtotal, quote.discount, quote.coupon ? code : null, requestId, fingerprint,
-          client.notes,
+          client.notes, buyerIp,
         ],
       );
 
@@ -426,6 +446,11 @@ export default {
 
       return [{ order_id: order.id, order_number: order.order_number, total: order.amount }];
     });
+    if (result === BLOCKED) {
+      if (ctx.requestIp) await ctx.q('UPDATE public.ip_blacklist SET blocked_orders = coalesce(blocked_orders,0) + 1 WHERE store_id = $1 AND trim(ip_address) = $2', [p_store_id, String(ctx.requestIp).replace(/^::ffff:/, '')]);
+      throw forbidden('Commande impossible depuis ce numéro ou cet appareil', { code: 'ORDER_BLOCKED' });
+    }
+    return result;
   },
 
   async soft_delete_store_order({ p_order_id }, ctx) {
