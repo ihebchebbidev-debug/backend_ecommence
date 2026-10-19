@@ -205,6 +205,29 @@ export function adexGovernorateCode(region) {
   return i >= 0 ? String(i + 1) : '';
 }
 
+/**
+ * Aramex: real piece count and weight per order, and account-specific service
+ * codes / label report from the seller's provider settings (Aramex defaults otherwise),
+ * so older DB presets without these settings keep working.
+ */
+export function coerceAramexPayload(payload, order, settings = {}) {
+  const sh = payload?.Shipments?.[0];
+  if (!sh?.Details) return payload;
+  const pieces = Math.max(1, Math.floor(Number(order.quantity) || 1));
+  const perItem = Number(String(settings.weight_per_item_kg ?? '').replace(',', '.'));
+  const weight = Math.max(0.1, Math.round((Number.isFinite(perItem) && perItem > 0 ? perItem : 1) * pieces * 1000) / 1000);
+  const str = (v, d) => (typeof v === 'string' && v.trim() ? v.trim().toUpperCase() : d);
+  sh.Details.NumberOfPieces = pieces;
+  sh.Details.ActualWeight = { Unit: 'KG', Value: weight };
+  sh.Details.ProductGroup = str(settings.product_group, sh.Details.ProductGroup || 'DOM');
+  sh.Details.ProductType = str(settings.product_type, sh.Details.ProductType || 'ONP');
+  sh.Details.Services = str(settings.services, sh.Details.Services || 'CODS');
+  if (sh.Details.CashOnDeliveryAmount) sh.Details.CashOnDeliveryAmount.Value = Number(sh.Details.CashOnDeliveryAmount.Value) || 0;
+  const report = Number(settings.label_report_id);
+  if (payload.LabelInfo && Number.isInteger(report) && report > 0) payload.LabelInfo.ReportID = report;
+  return payload;
+}
+
 export async function createShipment(provider, credentials, integration, order) {
   let payload = deepReplace(provider.create_shipment_payload_template || {}, {
     order: { ...order, amount: String(order.amount), quantity: String(order.quantity), date_ms: `/Date(${Date.now()})/`, date_iso: new Date().toISOString().slice(0, 10), adex_region: adexGovernorateCode(order.region) },
@@ -221,6 +244,7 @@ export async function createShipment(provider, credentials, integration, order) 
       ouvrirColis: order.ouvrir_colis ? 'oui' : 'non',
     });
   }
+  if (provider.code === 'aramex') payload = coerceAramexPayload(payload, order, integration.provider_settings || {});
   if (integration.test_mode) {
     const tracking = `TEST-${order.order_number || Date.now()}`;
     return { success: true, external_shipment_id: tracking, tracking_number: tracking, status: 'created',

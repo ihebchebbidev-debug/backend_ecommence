@@ -533,7 +533,63 @@
       ]
     },
     "settings_schema": {
-      "fields": []
+      "fields": [
+        {
+          "key": "weight_per_item_kg",
+          "label_fr": "Poids par article (kg)",
+          "label_en": "Weight per item (kg)",
+          "label_ar": "الوزن لكل قطعة (كغ)",
+          "type": "text",
+          "required": false,
+          "help_fr": "Par défaut 1 kg",
+          "help_en": "Default 1 kg",
+          "help_ar": "افتراضيًا 1 كغ"
+        },
+        {
+          "key": "product_group",
+          "label_fr": "Groupe produit",
+          "label_en": "Product group",
+          "label_ar": "مجموعة المنتج",
+          "type": "text",
+          "required": false,
+          "help_fr": "Fourni par Aramex (DOM par défaut)",
+          "help_en": "Given by Aramex (default DOM)",
+          "help_ar": "تقدمه أرامكس (DOM افتراضيًا)"
+        },
+        {
+          "key": "product_type",
+          "label_fr": "Type produit",
+          "label_en": "Product type",
+          "label_ar": "نوع المنتج",
+          "type": "text",
+          "required": false,
+          "help_fr": "Fourni par Aramex (ONP par défaut)",
+          "help_en": "Given by Aramex (default ONP)",
+          "help_ar": "تقدمه أرامكس (ONP افتراضيًا)"
+        },
+        {
+          "key": "services",
+          "label_fr": "Services",
+          "label_en": "Services",
+          "label_ar": "الخدمات",
+          "type": "text",
+          "required": false,
+          "help_fr": "CODS = contre-remboursement",
+          "help_en": "CODS = cash on delivery",
+          "help_ar": "CODS = الدفع عند الاستلام"
+        },
+        {
+          "key": "label_report_id",
+          "label_fr": "N° modèle d'étiquette",
+          "label_en": "Label report ID",
+          "label_ar": "رقم نموذج الملصق",
+          "type": "text",
+          "required": false,
+          "help_fr": "Fourni par Aramex (9729 par défaut)",
+          "help_en": "Given by Aramex (default 9729)",
+          "help_ar": "تقدمه أرامكس (9729 افتراضيًا)"
+        }
+      ]
     },
     "create_shipment_payload_template": {
       "ClientInfo": {

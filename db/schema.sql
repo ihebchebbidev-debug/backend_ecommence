@@ -252,7 +252,8 @@ CREATE TABLE IF NOT EXISTS public.delivery_provider_localities (
   "provider_code"                    text NOT NULL,
   "raw_payload"                      jsonb,
   "updated_at"                       timestamptz,
-  CONSTRAINT delivery_provider_localities_pkey PRIMARY KEY ("id")
+  CONSTRAINT delivery_provider_localities_pkey PRIMARY KEY ("id"),
+  CONSTRAINT delivery_provider_localities_provider_locality_key UNIQUE ("provider_code", "locality_id")
 );
 
 -- ---------------------------------------------------------------------
@@ -943,9 +944,10 @@ CREATE TABLE IF NOT EXISTS public.store_custom_limits (
 );
 
 -- ---------------------------------------------------------------------
--- store_delivery_integrations (23 columns)
+-- store_delivery_integrations (24 columns)
 -- ---------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS public.store_delivery_integrations (
+  "last_verified_at" timestamptz,
   "created_at"                       timestamptz,
   "credentials_encrypted"            jsonb,
   "default_provider"                 boolean,
@@ -1820,3 +1822,5 @@ CREATE TABLE IF NOT EXISTS public.store_form_submissions (
 CREATE INDEX IF NOT EXISTS idx_store_form_submissions_store_date ON public.store_form_submissions (store_id, created_at DESC);
 
 COMMIT;
+
+CREATE UNIQUE INDEX IF NOT EXISTS delivery_shipments_one_active_order ON public.delivery_shipments(order_id) WHERE COALESCE(status,'') NOT IN ('failed','cancelled','canceled');

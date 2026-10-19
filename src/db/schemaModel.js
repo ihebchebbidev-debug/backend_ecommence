@@ -8,7 +8,7 @@ import { pool } from '../db.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 export const dbDir = path.join(here, '..', '..', 'db');
-export const SQL_FILES = ['schema.sql', 'auth_schema.sql', 'realtime.sql', 'commerce.sql', 'sell_more.sql', 'domain_requests.sql', 'domain_audit.sql', 'automation_webhooks.sql', 'messaging.sql', 'store_automations.sql', 'loyalty.sql', 'email_marketing.sql', 'protection.sql'];
+export const SQL_FILES = ['schema.sql', 'auth_schema.sql', 'realtime.sql', 'commerce.sql', 'sell_more.sql', 'domain_requests.sql', 'domain_audit.sql', 'automation_webhooks.sql', 'messaging.sql', 'store_automations.sql', 'loyalty.sql', 'email_marketing.sql', 'protection.sql', 'theme_protection.sql'];
 
 const CREATE_TABLE = /CREATE TABLE IF NOT EXISTS\s+([a-z_]+)\.([a-z0-9_]+)\s*\(([\s\S]*?)\n\);/gi;
 

@@ -22,7 +22,12 @@ export default async function storePaymentCallback(req, res, ctx) {
     body = req.body || {};
   }
 
-  const paymentRef = body.payment_ref || body.paymentRef || body.id || body.reference || body.token || null;
+  // Stripe sends an event whose session id is data.object.id (body.id is the event id).
+  const stripeSession = body?.object === 'event' ? body?.data?.object?.id : null;
+  if (body?.object === 'event' && !String(stripeSession || '').startsWith('cs_')) {
+    return json(res, { ok: true, ignored: true }); // events we don't use
+  }
+  const paymentRef = stripeSession || body.payment_id || body.payment_ref || body.paymentRef || body.id || body.reference || body.token || null;
   if (!paymentRef) return json(res, { ok: false, message: 'payment_ref manquant' }, 400);
 
   let order = await ctx.q(
@@ -52,8 +57,8 @@ export default async function storePaymentCallback(req, res, ctx) {
   if (!provider) return json(res, { ok: false, message: 'Provider manquant' }, 400);
 
   const integration = await ctx.q(
-    'SELECT credentials_encrypted, credentials_iv, credentials_version, is_active, connection_status FROM public.store_payment_integrations WHERE store_id=$1 AND is_active=true',
-    [order.store_id],
+    'SELECT credentials_encrypted, credentials_iv, credentials_version, is_active, connection_status FROM public.store_payment_integrations WHERE store_id=$1 AND provider=$2 AND is_active=true',
+    [order.store_id, provider],
   ).then((r) => r[0]);
   if (!integration || !integration.is_active || integration.connection_status !== 'connected') {
     return json(res, { ok: false, message: 'Intégration inactive' }, 409);
@@ -101,6 +106,41 @@ export default async function storePaymentCallback(req, res, ctx) {
     gatewayStatus = psBool ? 'completed' : 'failed';
     gatewayAmountTnd = Number(body.amount || 0);
     gatewayRef = paymentRef;
+  } else if (provider === 'flouci') {
+    // Never trust the webhook body: ask Flouci for the payment's real state.
+    const pub = creds.app_public || '';
+    const sec = creds.app_secret || '';
+    if (!pub || !sec) return json(res, { ok: false, message: 'Clés Flouci manquantes' }, 500);
+    const r = await fetch(`https://developers.flouci.com/api/v2/verify_payment/${encodeURIComponent(paymentRef)}`, {
+      headers: { Authorization: `Bearer ${pub}:${sec}` },
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!r.ok) return json(res, { ok: false, message: `Flouci HTTP ${r.status}` }, 502);
+    const d = await r.json().catch(() => ({}));
+    const result = d.result || {};
+    gatewayStatus = String(result.status || '').toLowerCase() === 'success' ? 'completed' : String(result.status || '').toLowerCase();
+    gatewayAmountTnd = Number(result.amount || 0) / 1000;
+    gatewayRef = paymentRef;
+    const tracking = result.developer_tracking_id || null;
+    if (tracking && String(tracking) !== String(order.id)) {
+      return json(res, { ok: false, message: 'Paiement lié à une autre commande' }, 409);
+    }
+  } else if (provider === 'stripe') {
+    // Re-read the Checkout Session with the seller's key instead of trusting the event.
+    const key = creds.secret_key || '';
+    if (!key) return json(res, { ok: false, message: 'Clé Stripe manquante' }, 500);
+    const r = await fetch(`https://api.stripe.com/v1/checkout/sessions/${encodeURIComponent(paymentRef)}`, {
+      headers: { Authorization: `Bearer ${key}` },
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!r.ok) return json(res, { ok: false, message: `Stripe HTTP ${r.status}` }, 502);
+    const s = await r.json();
+    if (s.client_reference_id && String(s.client_reference_id) !== String(order.id)) {
+      return json(res, { ok: false, message: 'Paiement lié à une autre commande' }, 409);
+    }
+    gatewayStatus = s.payment_status === 'paid' ? 'completed' : s.status === 'expired' ? 'expired' : 'pending';
+    gatewayAmountTnd = Number(s.amount_total || 0) / 100;
+    gatewayRef = s.id;
   } else {
     return json(res, { ok: false, message: 'Provider non supporté' }, 400);
   }

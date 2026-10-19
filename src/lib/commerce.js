@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { badRequest, forbidden, ApiError } from './errors.js';
 import { applyOffers } from './offers.js';
+import { DELIVERY_KEYS, parseDeliverySettings, applyShopDelivery } from './checkoutExtras.js';
 
 export function id(value) {
   if (typeof value !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)) throw badRequest('Invalid identifier');
@@ -105,10 +106,12 @@ export async function priceCheckout(db, storeId, items, currency, code = '', loc
     rows.push({item,product,bundle,qty,count,unitPrice:major(bundle ? unitMinor / bundle.quantity : unitMinor,currency),bundlePrice:bundle ? major(unitMinor,currency) : null,lineMinor,deliveryMinor});
   }
   const subtotal = rows.reduce((s,r)=>s+r.lineMinor,0);
-  const delivery = rows.reduce((s,r)=>s+r.deliveryMinor,0);
   // Shop offers (volume, gift boxes, buy X get Y, upsells) come before any coupon.
   const offers = await applyOffers(db, storeId, rows, v => money(String(Number(v) || 0), currency));
   const offerMinor = offers.discount;
+  // Shop-wide delivery pricing (per product, flat per order, free above a threshold).
+  const deliveryRows = await db.q(`SELECT key, value FROM public.store_settings WHERE store_id=$1 AND key = ANY($2)`, [storeId, DELIVERY_KEYS]);
+  const delivery = applyShopDelivery(rows, parseDeliverySettings(deliveryRows, v => money(String(Number(v) || 0), currency)), subtotal - offerMinor);
   let coupon = null, discount = 0;
   if (code) {
     const matches = await db.q(`SELECT *, value::text,min_order_amount::text FROM public.coupons WHERE store_id=$1 AND upper(trim(code))=$2${lock ? ' FOR UPDATE' : ''}`,[storeId,couponCode(code)]);

@@ -4,6 +4,7 @@ import { parseLimits, limitViolation, LIMIT_KEYS } from '../lib/protection.js';
 import { createHash } from 'node:crypto';
 import { badRequest, forbidden } from '../lib/errors.js';
 import { id, text, couponCode, priceCheckout, major } from '../lib/commerce.js';
+import { cleanCheckoutAnswers, answersAsNotes } from '../lib/checkoutExtras.js';
 
 const ORDER_COLUMNS_SECURE = `
   o.id, o.order_number, o.client_id, o.client_name, o.client_phone, o.product_id,
@@ -372,6 +373,10 @@ export default {
       }
 
       const quote = await priceCheckout(t, p_store_id, items, p_currency, code, true);
+      // Seller's extra checkout fields: validated against the shop's own definitions.
+      const fieldDefs = await t.q(`SELECT field_name, field_label, field_type, required, options FROM public.store_custom_fields WHERE store_id=$1 ORDER BY sort_order`, [p_store_id]);
+      const answers = cleanCheckoutAnswers(fieldDefs, p_client?.custom_fields);
+      if (answers.length) client.notes = [client.notes, answersAsNotes(answers)].filter(Boolean).join('\n').slice(0, 2000);
       if (code) {
         const plan = await t.one(`SELECT coalesce(o.is_enabled,pl.has_coupons,false) AS allowed FROM public.platform_stores s
           LEFT JOIN public.store_feature_overrides o ON o.store_id=s.id AND o.feature_key='has_coupons'
@@ -404,8 +409,8 @@ export default {
            product_id, product_name, quantity, amount, delivery_fee, currency, status,
            bundle_id, bundle_name, bundle_label, bundle_price, bundle_quantity,
            payment_provider, address, city, region, merchandise_subtotal, discount_amount,
-           coupon_code, checkout_request_id, checkout_fingerprint, notes, client_ip, created_at, updated_at
-         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'pending',$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28, now(), now())
+           coupon_code, checkout_request_id, checkout_fingerprint, notes, client_ip, checkout_answers, created_at, updated_at
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'pending',$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29, now(), now())
          RETURNING id, order_number, amount`,
         [
           p_store_id, orderNumber, clientRow.id, client.name, client.phone, client.phone2,
@@ -415,7 +420,7 @@ export default {
           text(p_payment_provider || p_payment_method || '', 60),
           client.address, client.city, client.region,
           quote.subtotal, quote.discount, quote.coupon ? code : null, requestId, fingerprint,
-          client.notes, buyerIp,
+          client.notes, buyerIp, answers.length ? JSON.stringify(answers) : null,
         ],
       );
 

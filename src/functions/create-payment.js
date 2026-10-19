@@ -139,7 +139,7 @@ export default async function createPayment(req, res, ctx) {
             lastName: fullName.split(' ').slice(1).join(' ') || '',
             email: profile?.email || '',
             orderId: payment.id,
-            webhook: `${process.env.PUBLIC_FUNCTIONS_BASE_URL || ''}/functions/v1/payment-callback`,
+            webhook: `${(process.env.PUBLIC_FUNCTIONS_BASE_URL || process.env.PUBLIC_URL || '').replace(/\/+$/, '')}/functions/v1/payment-callback`,
             successUrl: `${successUrl}?payment=${payment.id}&status=success`,
             failUrl: `${failUrl}?payment=${payment.id}&status=failed`,
             theme: 'dark',

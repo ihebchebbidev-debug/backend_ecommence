@@ -10,7 +10,7 @@ export default async function testStorePayment(req, res, ctx) {
   const provider = body.provider;
   if (!store_id || !provider) return json(res, { ok: false, message: 'Paramètres manquants' }, 400);
 
-  if (!['konnect', 'paymee'].includes(provider)) return json(res, { ok: false, message: 'Provider non supporté' }, 400);
+  if (!['konnect', 'paymee', 'flouci', 'stripe'].includes(provider)) return json(res, { ok: false, message: 'Provider non supporté' }, 400);
 
   if (!ctx.userId) return json(res, { ok: false, message: 'Non authentifié' }, 401);
 
@@ -77,6 +77,45 @@ export default async function testStorePayment(req, res, ctx) {
       message = validFormat ? 'Clé enregistrée ; connexion Paymee non vérifiée. Un paiement sandbox est requis.' : 'Clé Paymee invalide';
       await ctx.q(`UPDATE public.store_payment_integrations SET connection_status=$1, last_tested_at=now() WHERE id=$2`, [validFormat ? 'configured' : 'error', integration.id]);
       return json(res, { ok: false, message, status: validFormat ? 'configured' : 'error', verified: false });
+    }
+  } else if (provider === 'flouci') {
+    const pub = creds.app_public || '';
+    const sec = creds.app_secret || '';
+    if (!pub || !sec) {
+      message = 'Clés Flouci manquantes';
+    } else {
+      // Flouci has no dedicated "who am I" call: verifying an unknown payment id
+      // still authenticates the keys first, so 401/403 means wrong keys.
+      try {
+        const r = await fetch('https://developers.flouci.com/api/v2/verify_payment/connection-test', {
+          headers: { Authorization: `Bearer ${pub}:${sec}` },
+          signal: AbortSignal.timeout(15000),
+        });
+        if (r.status === 401 || r.status === 403) message = 'Clés Flouci refusées (vérifiez la clé publique et la clé privée)';
+        else if (r.status >= 500) message = `Flouci indisponible (HTTP ${r.status}), réessayez plus tard`;
+        else { ok = true; message = 'Clés Flouci acceptées'; }
+      } catch (e) {
+        message = `Erreur réseau: ${e instanceof Error ? e.message : 'unknown'}`;
+      }
+    }
+  } else if (provider === 'stripe') {
+    const key = creds.secret_key || '';
+    if (!key) {
+      message = 'Clé secrète Stripe manquante';
+    } else {
+      try {
+        const r = await fetch('https://api.stripe.com/v1/balance', {
+          headers: { Authorization: `Bearer ${key}` },
+          signal: AbortSignal.timeout(15000),
+        });
+        if (r.ok) { ok = true; message = key.includes('_test_') ? 'Connexion Stripe réussie (mode test)' : 'Connexion Stripe réussie'; }
+        else {
+          const d = await r.json().catch(() => ({}));
+          message = `Stripe HTTP ${r.status}${d?.error?.message ? `: ${d.error.message}` : ''}`;
+        }
+      } catch (e) {
+        message = `Erreur réseau: ${e instanceof Error ? e.message : 'unknown'}`;
+      }
     }
   }
 

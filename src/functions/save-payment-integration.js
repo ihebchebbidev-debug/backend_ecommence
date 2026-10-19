@@ -14,7 +14,18 @@ export function maskPaymentCredentials(creds) {
   return result;
 }
 
-const PROVIDER_FIELDS = { konnect: ['api_key', 'receiver_wallet_id'], paymee: ['api_key'] };
+const PROVIDER_FIELDS = {
+  konnect: ['api_key', 'receiver_wallet_id'],
+  paymee: ['api_key'],
+  flouci: ['app_public', 'app_secret'],
+  stripe: ['secret_key'],
+};
+
+// Cheap format checks so obvious paste mistakes fail at save time.
+function formatError(provider, creds) {
+  if (provider === 'stripe' && !/^(sk|rk)_(live|test)_/.test(String(creds.secret_key || '').trim())) return 'La clé Stripe doit commencer par sk_live_, sk_test_ ou rk_…';
+  return null;
+}
 
 export default async function savePaymentIntegration(req, res, ctx) {
   if (methodGuard(req, res)) return;
@@ -45,6 +56,9 @@ export default async function savePaymentIntegration(req, res, ctx) {
     for (const fieldKey of PROVIDER_FIELDS[provider]) {
       if (!credentials?.[fieldKey]) return json(res, { error: `Champ requis manquant: ${fieldKey}` }, 400);
     }
+    for (const k of Object.keys(credentials)) credentials[k] = String(credentials[k]).trim();
+    const fmt = formatError(provider, credentials);
+    if (fmt) return json(res, { error: fmt }, 400);
   }
 
   if (!canEncryptPaymentCredentials()) return json(res, { error: 'Payment encryption key missing' }, 500);
