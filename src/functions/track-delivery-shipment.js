@@ -1,5 +1,5 @@
 import { json, methodGuard } from './_shared/respond.js';
-import { decryptDeliveryCredentials, canEncryptDelivery, buildAuthHeaders, extractFirstMatch, mapStatus, assertAccountAndStore, deliveryResponseError, sendProviderRequest, deepReplace } from './_shared/delivery.js';
+import { syncOrderDeliveryStatus, decryptDeliveryCredentials, canEncryptDelivery, buildAuthHeaders, extractFirstMatch, mapStatus, assertAccountAndStore, deliveryResponseError, sendProviderRequest, deepReplace } from './_shared/delivery.js';
 
 const rateLimitMap = new Map();
 function checkRateLimit(storeId, providerCode) {
@@ -29,6 +29,7 @@ export default async function trackDeliveryShipment(req, res, ctx) {
 
   const integration = await ctx.q('SELECT * FROM public.store_delivery_integrations WHERE store_id=$1 AND provider_id=$2', [store_id, provider.id]).then((r) => r[0]);
   if (!integration) return json(res, { error: 'Intégration non configurée' }, 400);
+  if (String(shipment.tracking_number).startsWith('TEST-') || integration.test_mode) return json(res, { error: 'Simulation : suivi et annulation réseau désactivés.', code: 'test_mode_no_network' }, 400);
 
   const secret = await ctx.q('SELECT credentials_ciphertext, credentials_iv, encryption_version FROM public.delivery_integration_secrets WHERE integration_id=$1', [integration.id]).then((r) => r[0]);
   if (!secret) return json(res, { error: 'Token non configuré' }, 400);
@@ -60,6 +61,8 @@ export default async function trackDeliveryShipment(req, res, ctx) {
     `INSERT INTO public.delivery_tracking_events (shipment_id, store_id, event_type, status, description, raw_data) VALUES ($1,$2,'tracking_update',$3,$4,$5)`,
     [shipment_id, store_id, mappedStatus, `Suivi: ${rawStatus} → ${mappedStatus}`, JSON.stringify(data)],
   );
+
+  await syncOrderDeliveryStatus(ctx, shipment.order_id, store_id, mappedStatus);
 
   return json(res, { success: true, status: mappedStatus, raw_status: rawStatus });
 }

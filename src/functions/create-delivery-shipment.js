@@ -14,6 +14,11 @@ export default async function createDeliveryShipment(req, res, ctx) {
   if (!order) return json(res, { error: 'Commande introuvable' }, 404);
   if (order.status !== 'confirmed') return json(res, { error: 'La commande doit être confirmée avant l\'expédition' }, 400);
 
+  const shop = await ctx.q('SELECT currency FROM public.platform_stores WHERE id=$1', [store_id]).then(r => r[0]);
+  if ([order.currency, shop?.currency].some(c => c && String(c).trim().toUpperCase() !== 'TND')) {
+    return json(res, { error: 'Les transporteurs tunisiens acceptent uniquement les commandes et boutiques en TND.', code: 'carrier_currency_unsupported' }, 400);
+  }
+
   const sub = await ctx.q('SELECT customer_data_locked FROM public.store_subscriptions WHERE store_id=$1', [store_id]).then((r) => r[0]);
   if (sub?.customer_data_locked) {
     return json(res, { error: 'Débloquez les données clients avant l\'envoi à la livraison. (Données clients masquées — rechargez votre solde ou activez votre abonnement.)', code: 'customer_data_locked' }, 403);
@@ -76,6 +81,8 @@ export default async function createDeliveryShipment(req, res, ctx) {
       if (form_overrides.prix_livraison != null) order.prix_livraison = form_overrides.prix_livraison;
       if (form_overrides.commentaire != null) order.notes = form_overrides.commentaire;
     }
+    if (!Number.isFinite(Number(order.amount)) || Number(order.amount) < 0 || Number(order.amount) > 999) return json(res, { error: 'First Delivery : prix requis entre 0 et 999 TND.' }, 400);
+    if (!Number.isInteger(Number(order.quantity)) || Number(order.quantity) <= 0) return json(res, { error: 'First Delivery : quantité entière strictement positive requise.' }, 400);
     if (!order.locality_id) return json(res, { error: 'Localité First Delivery manquante. Veuillez choisir une localité valide.' }, 400);
   }
 
@@ -94,6 +101,18 @@ export default async function createDeliveryShipment(req, res, ctx) {
     colis_fragile: form_overrides?.colis_fragile ?? false,
   };
 
+  // Reserve before contacting the carrier: the partial unique index arbitrates concurrent requests.
+  let reservation;
+  try {
+    reservation = await ctx.one(`INSERT INTO public.delivery_shipments
+      (store_id, order_id, provider_id, provider_code, integration_id, status, shipment_payload)
+      VALUES ($1,$2,$3,$4,$5,'pending',$6) RETURNING *`,
+      [store_id, order_id, provider.id, provider.code, integration.id, JSON.stringify(orderData)]);
+  } catch (err) {
+    if (err.code === '23505') return json(res, { error: 'Expédition déjà créée ou en cours. Ne renvoyez pas cette commande.', code: 'already_shipped' }, 409);
+    throw err;
+  }
+
   let shipmentResult;
   if (provider.integration_mode === 'manual') {
     shipmentResult = { success: true, external_shipment_id: `manual-${Date.now()}`, tracking_number: null, tracking_url: null, label_url: null, status: 'created', raw_response: { mode: 'manual' } };
@@ -105,16 +124,28 @@ export default async function createDeliveryShipment(req, res, ctx) {
   }
 
   if (!shipmentResult.success) {
+    await ctx.q(`UPDATE public.delivery_shipments SET status='failed', provider_response=$1, updated_at=now() WHERE id=$2`, [JSON.stringify(shipmentResult), reservation.id]);
     return json(res, { error: `Échec création expédition: ${shipmentResult.error}`, fd_error: shipmentResult.error }, 502);
   }
 
-  const shipment = await ctx.one(
-    `INSERT INTO public.delivery_shipments
-       (store_id, order_id, provider_id, provider_code, integration_id, external_shipment_id, tracking_number, tracking_url, label_url, status, shipment_payload, provider_response)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
-    [store_id, order_id, provider.id, provider.code, integration.id, shipmentResult.external_shipment_id, shipmentResult.tracking_number,
-      shipmentResult.tracking_url, shipmentResult.label_url, shipmentResult.status, JSON.stringify(orderData), JSON.stringify(shipmentResult.raw_response)],
-  );
+  const shipment = reservation;
+  try {
+    await ctx.q(`UPDATE public.delivery_shipments SET external_shipment_id=$1, tracking_number=$2,
+      tracking_url=$3, label_url=$4, status=$5, provider_response=$6, updated_at=now() WHERE id=$7`,
+      [shipmentResult.external_shipment_id, shipmentResult.tracking_number, shipmentResult.tracking_url,
+       shipmentResult.label_url, shipmentResult.status, JSON.stringify(shipmentResult.raw_response), shipment.id]);
+  } catch (err) {
+    console.error('[delivery] carrier succeeded; persistence failed', shipment.id, err.message);
+    try {
+      await ctx.q(`INSERT INTO public.delivery_tracking_events (shipment_id, store_id, event_type, status, description, raw_data)
+        VALUES ($1,$2,'persistence_recovery',$3,$4,$5)`, [shipment.id, store_id, shipmentResult.status,
+        'Carrier succeeded; shipment update failed. Do not resend.', JSON.stringify(shipmentResult)]);
+    } catch (recoveryError) {
+      console.error('[delivery] recovery persistence failed', shipment.id, recoveryError.message, JSON.stringify(shipmentResult));
+    }
+    return json(res, { success: true, error: 'Colis créé chez le transporteur mais sauvegarde incomplète. Ne pas renvoyer ; contactez le support.',
+      code: 'carrier_success_persistence_failed', shipment: { id: shipment.id, ...shipmentResult } });
+  }
 
   await ctx.q(
     `INSERT INTO public.delivery_tracking_events (shipment_id, store_id, event_type, status, description, raw_data)
@@ -123,7 +154,7 @@ export default async function createDeliveryShipment(req, res, ctx) {
   );
 
   await ctx.q(
-    `UPDATE public.orders SET delivery_status=$1, tracking_number=$2, updated_at=now() WHERE id=$3`,
+    `UPDATE public.orders SET delivery_status=$1, tracking_number=$2, status='shipped', updated_at=now() WHERE id=$3`,
     [shipmentResult.status, shipmentResult.tracking_number, order_id],
   );
 

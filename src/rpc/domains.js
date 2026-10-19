@@ -6,6 +6,15 @@ import { checkCertificate, healthChecks } from '../lib/domainHealth.js';
 // Seller domains must point at the platform server (same address as e-commence.shop).
 export const platformIps = () => String(process.env.PLATFORM_DOMAIN_IPS || '186.241.19.85').split(',').map((s) => s.trim()).filter(Boolean);
 
+/** The API is the authority for instructions, including multi-address deployments. */
+export function dnsRecords(domain, id) {
+  return [
+    ...platformIps().map((ip) => ({ type: ip.includes(':') ? 'AAAA' : 'A', name: '@', value: ip })),
+    { type: 'CNAME', name: 'www', value: domain },
+    { type: 'TXT', name: '_e-commence', value: ownershipRecord(id) },
+  ];
+}
+
 /** DNS check: root and www must both resolve only to platform addresses. Pure decision kept testable. */
 export function dnsVerdict(rootIps, wwwIps, allowed) {
   const ok = (ips) => ips.length > 0 && ips.every((ip) => allowed.includes(ip));
@@ -34,7 +43,7 @@ export async function checkDomainDns(domain, id) {
   verdict.www = verdict.www && www.complete;
   verdict.ok = verdict.root && verdict.www;
   const ownership = txt.some((chunks) => chunks.join('') === ownershipRecord(id));
-  return { ...verdict, ok: verdict.ok && ownership, ownership, found: { root: root.ips, www: www.ips, txt: txt.map((chunks) => chunks.join('')).sort() }, expected: platformIps(), expected_proof: ownershipRecord(id) };
+  return { ...verdict, ok: verdict.ok && ownership, ownership, found: { root: root.ips, www: www.ips, txt: txt.map((chunks) => chunks.join('')).sort() }, expected: platformIps(), expected_proof: ownershipRecord(id), dns_records: dnsRecords(domain, id) };
 }
 
 /** Activates the request and links it to the shop; retires the shop's previous active domain. */
@@ -79,7 +88,7 @@ async function auditVerification(t, ctx, req, storeId, result) {
 }
 
 export const normalizeDomain = (v) => String(v || '').trim().toLowerCase()
-  .replace(/^https?:\/\//, '').replace(/\/.*$/, '').replace(/^www\./, '');
+  .replace(/^https?:\/\//, '').replace(/\/.*$/, '').replace(/:\d+$/, '').replace(/\.$/, '').replace(/^www\./, '');
 
 async function requireSuperAdmin(ctx) {
   ctx.requireAuth();
@@ -113,7 +122,8 @@ const domainRpc = {
   async domain_request_list({ p_store_id }, ctx) {
     ctx.requireAuth();
     await ctx.assertStoreAccess(p_store_id, OWNER_ROLES);
-    return ctx.q(`SELECT ${COLS} FROM public.store_domain_requests WHERE store_id = $1 ORDER BY created_at DESC LIMIT 50`, [p_store_id]);
+    const rows = await ctx.q(`SELECT ${COLS} FROM public.store_domain_requests WHERE store_id = $1 ORDER BY created_at DESC LIMIT 50`, [p_store_id]);
+    return rows.map((r) => ({ ...r, dns_records: dnsRecords(r.domain, r.id) }));
   },
 
   /** domain_request_submit(p_store_id, p_domain, ...) → the new request */

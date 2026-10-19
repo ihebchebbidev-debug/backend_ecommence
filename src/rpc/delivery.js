@@ -1,4 +1,5 @@
 // Delivery RPCs — spec 3.7. Never expose encrypted credential columns.
+import { syncOrderDeliveryStatus } from '../functions/_shared/delivery.js';
 import { forbidden } from '../lib/errors.js';
 
 const PROVIDER_COLUMNS = `
@@ -45,7 +46,7 @@ export default {
          sdi.has_credentials,
          sdi.label_enabled,
          sdi.last_error,
-         sdi.last_test_at,
+         sdi.last_test_at, sdi.last_verified_at,
          sdi.localities_last_synced_at,
          sdi.masked_credentials,
          sdi.provider_code,
@@ -134,7 +135,7 @@ export default {
     await ctx.assertStoreAccess(p_store_id, ['owner', 'admin', 'manager']);
 
     const shipment = await ctx.one(
-      'SELECT id FROM public.delivery_shipments WHERE id = $1 AND store_id = $2',
+      'SELECT id, order_id FROM public.delivery_shipments WHERE id = $1 AND store_id = $2',
       [p_shipment_id, p_store_id],
     );
     if (!shipment) throw forbidden('Shipment not found for this store');
@@ -150,6 +151,7 @@ export default {
       [p_shipment_id, p_store_id, p_new_status],
     );
 
+    await syncOrderDeliveryStatus(ctx, shipment.order_id, p_store_id, p_new_status);
     return { success: true, shipment_id: p_shipment_id, status: p_new_status };
   },
 

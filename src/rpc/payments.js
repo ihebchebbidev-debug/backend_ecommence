@@ -19,6 +19,12 @@ export default {
     );
   },
 
+  // Public checkout switches: cash on delivery stays on unless the seller saved 'false'.
+  async get_store_public_checkout_settings({ p_store_id }, ctx) {
+    const row = await ctx.one(`SELECT value FROM public.store_settings WHERE store_id=$1 AND key='payment_cod_enabled'`, [p_store_id]);
+    return { cod_enabled: String(row?.value ?? '').trim().toLowerCase() !== 'false' };
+  },
+
   async get_store_public_payment_options({ p_store_id }, ctx) {
     return ctx.q(
       `SELECT provider

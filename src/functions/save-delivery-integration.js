@@ -116,13 +116,13 @@ export default async function saveDeliveryIntegration(req, res, ctx) {
          provider_code=$1, enabled=$2, status=$3, has_credentials=$4, masked_credentials=$5,
          sender_config=$6, provider_settings=$7, delivery_cost_tnd=$8, return_cost_tnd=$9,
          default_provider=$10, tracking_enabled=$11, label_enabled=$12, test_mode=$13,
-         last_test_at=$14, last_error=$15, updated_at=now()
+         last_test_at=$14, last_verified_at=CASE WHEN $17 THEN NULL ELSE last_verified_at END, last_error=$15, updated_at=now()
        WHERE id=$16 RETURNING id`,
       [
         provider.code, enabled, status, hasCreds, JSON.stringify(masked), JSON.stringify(sender_config || {}),
         JSON.stringify(provider_settings || {}), delivery_cost_tnd || 0, return_cost_tnd || 0,
         default_provider || false, trackingEnabled, labelEnabled, testMode,
-        existing.last_test_at || null, lastError, existing.id,
+        existing.last_test_at || null, lastError, existing.id, credentialsChanged,
       ],
     );
     integrationId = updated.id;

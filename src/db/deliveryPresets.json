@@ -264,9 +264,9 @@
         "nombreArticle": "{{order.quantity}}",
         "commentaire": "{{order.notes}}",
         "article": "{{order.product_name}}",
-        "nombreEchange": 0,
-        "estFragile": "{{sender.fragile}}",
-        "ouvrirColis": "{{sender.open_package}}"
+        "nombreEchange": "{{order.nombre_echange}}",
+        "estFragile": "{{order.colis_fragile}}",
+        "ouvrirColis": "{{order.ouvrir_colis}}"
       }
     },
     "tracking_payload_template": {

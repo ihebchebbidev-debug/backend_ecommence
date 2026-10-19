@@ -161,11 +161,22 @@ export function parseProviderResponse(text, format, operation) {
   try { return JSON.parse(text); } catch { return {}; }
 }
 
+export function isAllowedCarrierUrl(value) {
+  const url = new URL(value);
+  return !url.username && !url.password && (url.protocol === 'https:' ||
+    (url.protocol === 'http:' && url.hostname === 'delivery.colissimo.com.tn' && (!url.port || url.port === '80')));
+}
+
+export async function syncOrderDeliveryStatus(ctx, orderId, storeId, status) {
+  const orderStatus = { delivered: 'delivered', returned: 'returned', in_transit: 'shipped' }[status] || null;
+  await ctx.q(`UPDATE public.orders SET delivery_status=$1, status=COALESCE($2,status), updated_at=now() WHERE id=$3 AND store_id=$4`, [status, orderStatus, orderId, storeId]);
+}
+
 export async function sendProviderRequest(provider, credentials, endpoint, payload, timeoutMs = 30000) {
   const url = providerUrl(provider, endpoint, credentials);
-  if (!/^https:\/\//i.test(url)) throw new Error('Carrier API requires HTTPS; ask the carrier for a secure endpoint.');
+  if (!isAllowedCarrierUrl(url)) throw new Error('Carrier API requires HTTPS; ask the carrier for a secure endpoint.');
   const req = buildProviderRequest(provider, credentials, payload);
-  const res = await fetch(url, { method: req.method, headers: req.headers, body: req.body, redirect: 'error', signal: AbortSignal.timeout(timeoutMs) });
+  const res = await fetch(url, { method: req.method, headers: req.headers, body: ['GET', 'HEAD'].includes(req.method) ? undefined : req.body, redirect: 'error', signal: AbortSignal.timeout(timeoutMs) });
   const text = await res.text().catch(() => '');
   return { res, data: parseProviderResponse(text, req.format, req.operation) };
 }
@@ -202,7 +213,19 @@ export async function createShipment(provider, credentials, integration, order) 
     credentials: credentials || {},
   });
 
-  if (provider.code === 'first_delivery') payload = coerceFirstDeliveryPayload(payload);
+  if (provider.code === 'first_delivery') {
+    payload = coerceFirstDeliveryPayload(payload);
+    if (payload.Produit) Object.assign(payload.Produit, {
+      nombreEchange: order.nombre_echange ?? 0,
+      estFragile: order.colis_fragile ? 'oui' : 'non',
+      ouvrirColis: order.ouvrir_colis ? 'oui' : 'non',
+    });
+  }
+  if (integration.test_mode) {
+    const tracking = `TEST-${order.order_number || Date.now()}`;
+    return { success: true, external_shipment_id: tracking, tracking_number: tracking, status: 'created',
+      tracking_url: null, label_url: null, raw_response: { simulated: true, payload }, warning: 'Simulation : aucun colis envoyé au transporteur.' };
+  }
   if (payload?.pic && typeof payload.pic === 'object') {
     for (const f of ['prix', 'nb_pieces', 'echange']) if (payload.pic[f] != null && payload.pic[f] !== '') payload.pic[f] = Number(payload.pic[f]);
   }

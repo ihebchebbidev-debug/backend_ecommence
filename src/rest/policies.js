@@ -40,8 +40,8 @@ export const policies = {
   commerce_attempts: denied(),
   crm_calls: store(),
   delivery_integration_secrets: denied(),
-  delivery_shipments: store(),
-  delivery_tracking_events: store(),
+  delivery_shipments: store({ writeRoles: ['owner', 'admin', 'manager'] }),
+  delivery_tracking_events: store({ writeRoles: ['owner', 'admin', 'manager'] }),
   finance_fixed_items: store(),
   invoices: store(),
   // Per-shop fraud lists; rows without store_id are legacy platform entries (admin only).
@@ -56,8 +56,8 @@ export const policies = {
   store_banners: store({ publicRead: true }),
   store_custom_fields: store({ publicRead: true }),
   store_custom_limits: admin(),
-  store_delivery_integrations: store({ hidden: ['credentials_encrypted', 'credentials_iv', 'credentials_version'] }),
-  store_delivery_settings: store(),
+  store_delivery_integrations: store({ writeRoles: ['owner', 'admin'], hidden: ['credentials_encrypted', 'credentials_iv', 'credentials_version'] }),
+  store_delivery_settings: store({ writeRoles: ['owner', 'admin'] }),
   // Store members may read their own store's overrides (live "overrides_select_own_store"); only super admins write.
   store_feature_overrides: store({ writeRoles: [] }),
   store_form_submissions: denied(), // Read only through the staff-checked RPC; submissions only through published forms.

@@ -1,5 +1,5 @@
 import { json, methodGuard } from './_shared/respond.js';
-import { decryptDeliveryCredentials, canEncryptDelivery, buildAuthHeaders, assertAccountAndStore, deliveryResponseError } from './_shared/delivery.js';
+import { decryptDeliveryCredentials, canEncryptDelivery, sendProviderRequest, assertAccountAndStore, deliveryResponseError } from './_shared/delivery.js';
 
 function localizedError(status) {
   if (status === 401 || status === 403) return 'Token First Delivery invalide ou expiré. Veuillez générer un nouveau token depuis votre compte First Delivery > API.';
@@ -33,18 +33,15 @@ export default async function syncDeliveryLocalities(req, res, ctx) {
   // Only First Delivery publishes a read-only endpoint usable as a credential probe.
   // Other carriers validate credentials on their first real shipment, whose errors are surfaced.
   if (provider.code !== 'first_delivery' && !provider.localities_endpoint) {
-    await ctx.q(`UPDATE public.store_delivery_integrations SET status='connected', last_error=NULL, last_test_at=now(), updated_at=now() WHERE id=$1`, [integration.id]);
+    await ctx.q(`UPDATE public.store_delivery_integrations SET status='connected', last_error=NULL, last_verified_at=NULL, updated_at=now() WHERE id=$1`, [integration.id]);
     return json(res, { ok: true, synced: 0, message: 'Identifiants enregistrés. Ce transporteur ne propose pas de test : la première expédition confirmera la connexion.' });
   }
 
-  const localitiesUrl = `${provider.base_url}${provider.localities_endpoint || '/localities'}`;
-  const headers = buildAuthHeaders(provider, credentials);
-
-  let apiRes;
+  let apiRes, data;
   try {
-    apiRes = await fetch(localitiesUrl, { method: 'GET', headers, signal: AbortSignal.timeout(30000) });
+    ({ res: apiRes, data } = await sendProviderRequest(provider, credentials, provider.localities_endpoint || '/localities', { __method: 'GET' }));
   } catch {
-    return json(res, { error: 'Impossible de contacter First Delivery. Veuillez réessayer.' }, 502);
+    return json(res, { error: 'Impossible de contacter le transporteur avec un transport sécurisé.' }, 502);
   }
 
   if (!apiRes.ok) {
@@ -55,7 +52,6 @@ export default async function syncDeliveryLocalities(req, res, ctx) {
     return json(res, { error: localizedError(apiRes.status), status: apiRes.status }, 502);
   }
 
-  const data = await apiRes.json().catch(() => null);
   const providerError = deliveryResponseError(data);
   const localities = Array.isArray(data) ? data : Array.isArray(data?.result) ? data.result : Array.isArray(data?.data) ? data.data : null;
   if (providerError || !localities) {
@@ -64,13 +60,13 @@ export default async function syncDeliveryLocalities(req, res, ctx) {
     return json(res, { ok: false, error: message }, 502);
   }
   if (test_only) {
-    await ctx.q(`UPDATE public.store_delivery_integrations SET status='connected', last_error=NULL, updated_at=now() WHERE id=$1`, [integration.id]);
+    await ctx.q(`UPDATE public.store_delivery_integrations SET status='connected', last_verified_at=now(), last_error=NULL, updated_at=now() WHERE id=$1`, [integration.id]);
     return json(res, { success: true, ok: true, synced: 0 });
   }
 
   if (localities.length === 0) return json(res, { error: 'Aucune localité retournée par First Delivery' }, 502);
 
-  let syncedCount = 0;
+  let syncedCount = 0, failedCount = 0;
   for (const loc of localities) {
     const localityId = loc.locality_id ?? loc.id ?? loc.localityId;
     if (localityId == null || !Number.isFinite(Number(localityId))) continue;
@@ -82,15 +78,15 @@ export default async function syncDeliveryLocalities(req, res, ctx) {
         [provider.code, Number(localityId), loc.locality_name ?? loc.name ?? null, loc.delegation_name ?? null, loc.governorate_name ?? null, JSON.stringify(loc)],
       );
       syncedCount++;
-    } catch { /* skip failed rows, mirrors upsertErr check */ }
+    } catch (err) { failedCount++; console.error('[delivery localities] upsert failed', provider.code, localityId, err.message); }
   }
 
   if (syncedCount === 0) return json(res, { error: 'Aucune localité n’a pu être enregistrée', ok: false }, 502);
 
   await ctx.q(
-    `UPDATE public.store_delivery_integrations SET localities_last_synced_at=now(), status='connected', last_error=NULL, updated_at=now() WHERE id=$1`,
+    `UPDATE public.store_delivery_integrations SET localities_last_synced_at=now(), status='connected', last_verified_at=now(), last_error=NULL, updated_at=now() WHERE id=$1`,
     [integration.id],
   );
 
-  return json(res, { success: true, synced: syncedCount, total: localities.length });
+  return json(res, { success: true, synced: syncedCount, failed: failedCount, total: localities.length });
 }

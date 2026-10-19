@@ -1,6 +1,7 @@
 // Seller Zapier / Make webhooks: read status, save, remove and send a test event.
 import { json, methodGuard } from './_shared/respond.js';
 import { assertAccountAndStore } from './_shared/delivery.js';
+import billing from '../rpc/billing.js';
 import { validWebhookUrl, postWebhook } from '../lib/automationWebhooks.js';
 
 const mask = (url) => { try { const u = new URL(url); return `${u.origin}/…${u.pathname.slice(-4)}`; } catch { return ''; } };
@@ -17,6 +18,10 @@ export default async function automationWebhooks(req, res, ctx) {
   }
   if (!['zapier', 'make'].includes(provider)) return json(res, { error: 'Fournisseur inconnu' }, 400);
 
+  // Plan check on the server too: saving and testing need the same API feature the Integrations screen checks.
+  if ((action === 'save' || action === 'test') && !(await billing.plan_allows({ p_store_id: store_id, p_feature_key: 'has_api' }, ctx))) {
+    return json(res, { error: 'plan_required', code: 'PLAN_REQUIRED' }, 403);
+  }
   if (action === 'save') {
     if (!validWebhookUrl(provider, url)) return json(res, { error: 'invalid_url' }, 400);
     await ctx.q(`INSERT INTO public.store_automation_webhooks(store_id, provider, url, enabled) VALUES ($1,$2,$3,true)

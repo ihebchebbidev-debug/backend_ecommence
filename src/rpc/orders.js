@@ -331,6 +331,16 @@ export default {
         }
       }
 
+      // Payment method must be one the seller actually offers.
+      const isCard = p_payment_method === 'card';
+      if (isCard) {
+        const prov = await t.one(`SELECT 1 AS ok FROM public.store_payment_integrations WHERE store_id=$1 AND is_active=true AND connection_status='connected' AND ($2::text IS NULL OR provider=$2) LIMIT 1`, [p_store_id, p_payment_provider || null]);
+        if (!prov) throw badRequest('Paiement par carte indisponible', { code: 'PAYMENT_METHOD_UNAVAILABLE' });
+      } else {
+        const cod = await t.one(`SELECT value FROM public.store_settings WHERE store_id=$1 AND key='payment_cod_enabled'`, [p_store_id]);
+        if (String(cod?.value ?? '').trim().toLowerCase() === 'false') throw badRequest('Paiement à la livraison désactivé', { code: 'COD_DISABLED' });
+      }
+
       // Shop protection: refuse orders from this shop's blocked phones / IPs (digits-only phone match).
       const phoneDigits = String(client.phone || '').replace(/\D/g, '').slice(-8);
       const blocked = await t.one(
