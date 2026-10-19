@@ -35,12 +35,14 @@ export default {
   async agent_login({ p_username, p_password_hash }, ctx) {
     const member = await ctx.one(
       `SELECT id, store_id, name, role, permissions, status
-       FROM public.team_members WHERE username = $1 AND password_hash = $2`,
+       FROM public.team_members WHERE (lower(username) = lower($1) OR lower(email) = lower($1) OR phone = $1) AND password_hash = $2`,
       [p_username, p_password_hash],
     );
-    if (!member || member.status === 'inactive') {
+    if (!member || member.status !== 'active') {
       throw unauthorized('Invalid username or password');
     }
+    const shop = await ctx.one("SELECT id FROM public.platform_stores WHERE id=$1 AND deleted_at IS NULL AND status='active'",[member.store_id]);
+    if (!shop) throw unauthorized('Shop unavailable');
     const session = await ctx.one(
       `INSERT INTO public.agent_sessions (team_member_id, store_id, store_user_id, member_name, member_role, permissions, expires_at)
        VALUES ($1, $2, (SELECT user_id FROM public.platform_stores WHERE id = $2), $3, $4, $5, now() + interval '12 hours')
@@ -48,14 +50,18 @@ export default {
       [member.id, member.store_id, member.name, member.role, member.permissions],
     );
     // Sign-in history for the owner's Équipe → Activité page; never blocks the login.
-    await ctx.q('UPDATE public.team_members SET last_login_at = now() WHERE id = $1', [member.id]).catch(() => {});
+    await ctx.q('UPDATE public.team_members SET last_login_at = now() WHERE id = $1', [member.id]);
     await ctx.q(`INSERT INTO public.activity_log (store_id, team_member_id, user_name, action, entity_type, details, ip, created_at)
       VALUES ($1,$2,$3,'login','team_member',$4,$5,now())`,
-      [member.store_id, member.id, member.name, `Connexion (${member.role || 'membre'})`, ctx.requestIp || null]).catch(() => {});
+      [member.store_id, member.id, member.name, `Connexion (${member.role || 'membre'})`, ctx.requestIp || null]);
     return {
       session_id: session.id,
       store_id: member.store_id,
       member_name: member.name,
+      agent_name: member.name,
+      agent_role: member.role,
+      team_member_id: member.id,
+      account_type: 'team_member',
       member_role: member.role,
       permissions: member.permissions,
     };
@@ -64,20 +70,17 @@ export default {
   /** agent_check_username(p_username, p_exclude_id?, p_store_id?) → boolean */
   async agent_check_username({ p_username, p_exclude_id, p_store_id }, ctx) {
     if (!p_username) return false;
-    const conditions = ['username = $1'];
-    const params = [p_username];
+    const conditions = ['lower(username) = lower($1)'];
+    const params = [String(p_username).trim()];
     if (p_exclude_id) {
       params.push(p_exclude_id);
       conditions.push(`id <> $${params.length}`);
     }
-    if (p_store_id) {
-      params.push(p_store_id);
-      conditions.push(`store_id = $${params.length}`);
-    }
+
     const row = await ctx.one(
       `SELECT 1 FROM public.team_members WHERE ${conditions.join(' AND ')} LIMIT 1`,
       params,
     );
-    return !!row;
+    return !row;
   },
 };

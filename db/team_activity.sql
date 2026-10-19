@@ -1,5 +1,7 @@
 -- Team member sign-in tracking and activity details.
 BEGIN;
+ALTER TABLE public.activity_log ADD COLUMN IF NOT EXISTS metadata jsonb NOT NULL DEFAULT '{}';
+ALTER TABLE public.agent_sessions ADD COLUMN IF NOT EXISTS last_seen_at timestamptz DEFAULT now();
 ALTER TABLE public.team_members ADD COLUMN IF NOT EXISTS last_login_at timestamptz;
 ALTER TABLE public.activity_log ADD COLUMN IF NOT EXISTS team_member_id uuid;
 ALTER TABLE public.activity_log ADD COLUMN IF NOT EXISTS ip text;

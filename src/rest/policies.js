@@ -22,7 +22,7 @@ const denied = () => ({ scope: 'denied' });
 
 export const policies = {
   // ── store-scoped operational data ───────────────────────────────────
-  activity_log: store(),
+  activity_log: store({ writeRoles: [] }),
   agent_sessions: denied(),
   campaigns: store(),
   carriers: store({ publicRead: true }),

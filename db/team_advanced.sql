@@ -49,10 +49,10 @@ BEGIN
   END IF;
 
   INSERT INTO public.activity_log (store_id, team_member_id, user_name, action, entity_type, entity_id, details, created_at)
-  VALUES (v_store, v_member, COALESCE(v_actor, 'Propriétaire'), v_action, v_type, to_jsonb(r) ->> 'id', v_details, now());
+  VALUES (v_store, v_member, COALESCE(v_actor, 'Système / propriétaire'), v_action, v_type, to_jsonb(r) ->> 'id', v_details, now());
   RETURN NULL;
 EXCEPTION WHEN OTHERS THEN
-  RETURN NULL; -- logging must never block a save
+  RAISE; -- A successful mutation must have its audit event.
 END $$;
 
 DROP TRIGGER IF EXISTS trg_team_activity_products ON public.products;
@@ -62,7 +62,7 @@ CREATE TRIGGER trg_team_activity_products AFTER INSERT OR UPDATE OR DELETE ON pu
 DO $$
 DECLARE t text;
 BEGIN
-  FOREACH t IN ARRAY ARRAY['store_theme', 'store_theme_instances', 'store_pages'] LOOP
+  FOREACH t IN ARRAY ARRAY['store_theme', 'store_theme_instances', 'store_pages', 'store_builder_configs', 'store_theme_versions'] LOOP
     IF to_regclass('public.' || t) IS NOT NULL THEN
       EXECUTE format('DROP TRIGGER IF EXISTS trg_team_activity_design ON public.%I', t);
       EXECUTE format('CREATE TRIGGER trg_team_activity_design AFTER INSERT OR UPDATE OR DELETE ON public.%I
