@@ -133,6 +133,7 @@ export default async function storePaymentCallback(req, res, ctx) {
     });
     if (!r.ok) return json(res, { ok: false, message: `Flouci HTTP ${r.status}` }, 502);
     const d = await r.json().catch(() => ({}));
+    if (d.success === false) return json(res, { ok: false, message: 'Flouci: paiement introuvable' }, 404);
     const result = d.result || {};
     gatewayStatus = String(result.status || '').toLowerCase() === 'success' ? 'completed' : String(result.status || '').toLowerCase();
     gatewayAmountTnd = Number(result.amount || 0) / 1000;

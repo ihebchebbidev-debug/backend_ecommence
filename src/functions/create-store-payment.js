@@ -90,7 +90,7 @@ export default async function createStorePayment(req, res, ctx) {
         acceptedPaymentMethods: ['wallet', 'bank_card', 'e-DINAR'],
         lifespan: 30,
         checkoutForm: true,
-        addPaymentFeesToAmount: true,
+        addPaymentFeesToAmount: false, // customer pays exactly the order total; amount check stays exact
         firstName: (order.client_name || '').split(' ')[0] || '',
         lastName: (order.client_name || '').split(' ').slice(1).join(' ') || '',
         ...(order.client_email ? { email: order.client_email } : {}),

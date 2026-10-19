@@ -2,7 +2,7 @@
 // Credentials may carry mode: 'sandbox' to use the provider's test environment.
 const isSandbox = (creds) => String(creds?.mode || '').toLowerCase() === 'sandbox';
 
-export const konnectBase = (c) => (isSandbox(c) ? 'https://api.preprod.konnect.network/api/v2' : 'https://api.konnect.network/api/v2');
+export const konnectBase = (c) => (isSandbox(c) ? 'https://api.sandbox.konnect.network/api/v2' : 'https://api.konnect.network/api/v2');
 export const paymeeBase = (c) => (isSandbox(c) ? 'https://sandbox.paymee.tn/api/v2' : 'https://app.paymee.tn/api/v2');
 export const clictopayBase = (c) => (isSandbox(c) ? 'https://test.clictopay.com/payment/rest' : 'https://ipay.clictopay.com/payment/rest');
 export const FLOUCI_BASE = 'https://developers.flouci.com/api/v2';
