@@ -37,8 +37,9 @@ CREATE OR REPLACE FUNCTION public.record_automation_order_event() RETURNS trigge
 LANGUAGE plpgsql SET search_path = public AS $$
 DECLARE kind text;
 BEGIN
+  IF NEW.status = 'abandoned' THEN RETURN NEW; END IF;
   IF NOT EXISTS (SELECT 1 FROM public.store_automation_webhooks w WHERE w.store_id = NEW.store_id AND w.enabled) THEN RETURN NEW; END IF;
-  IF TG_OP = 'INSERT' THEN kind := 'order.created';
+  IF TG_OP = 'INSERT' OR (TG_OP = 'UPDATE' AND OLD.status = 'abandoned') THEN kind := 'order.created';
   ELSIF NEW.status IS DISTINCT FROM OLD.status OR NEW.delivery_status IS DISTINCT FROM OLD.delivery_status
      OR NEW.payment_status IS DISTINCT FROM OLD.payment_status OR NEW.tracking_number IS DISTINCT FROM OLD.tracking_number THEN kind := 'order.updated';
   END IF;

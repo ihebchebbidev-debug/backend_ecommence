@@ -1,4 +1,8 @@
 # Backend rules
+- Team management uses authenticated owner/admin RPCs plus canManageTeam, allowlisted web roles/module actions and atomic session revocation; removed access keeps the member row for audit history, never grants platform roles or writes profiles.
+- Mobile reference lookup shares live team-session validation and seller commerce permissions, matches exact shop-scoped identifiers and returns an allowlisted masked projection; it never prepares, pays or dispatches an order.
 - Merchant payments share version-aware paymentCrypto across save, probe, checkout and callbacks.
 - Carrier calls use `sendProviderRequest`; startup seeds missing rows only, preserving admin choices. Run `bun scripts/export-delivery-presets.ts` after admin preset edits to sync the server mirror, so deployments populate the catalog.
 - Seller automation webhooks (Zapier/Make) use a trigger-filled `automation_events` outbox drained by a server worker with retries; URLs stay in a REST-denied table and only official hook hosts are accepted, so orders are never lost or posted to arbitrary addresses.
+- Mobile order writes (edit, status, prepare) go through `mobileOrders.js`: one transaction, shop+permission check, `updated_at` version guard and a `mobile_idempotency` key per tap; the `order_events` trigger records every order change from any path, so history is never assembled client-side.
+- Account deletion goes only through `account_delete` (rpc/account.js): password re-check, then one transaction closes owned shops, removes memberships, anonymizes login/profile and revokes sessions; platform billing records are retained for legal reasons.

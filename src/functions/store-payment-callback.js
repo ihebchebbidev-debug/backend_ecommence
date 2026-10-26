@@ -34,7 +34,7 @@ export default async function storePaymentCallback(req, res, ctx) {
     if (!o?.payment_ref) return json(res, { ok: false, message: 'Aucun paiement en cours' }, 404);
     body = { ...body, payment_ref: o.payment_ref };
   }
-  const paymentRef = stripeSession || body.payment_id || body.payment_ref || body.paymentRef || body.id || body.reference || body.token || null;
+  const paymentRef = stripeSession || body.mdOrder || body.payment_id || body.payment_ref || body.paymentRef || body.id || body.reference || body.token || null;
   if (!paymentRef) return json(res, { ok: false, message: 'payment_ref manquant' }, 400);
 
   let order = await ctx.q(

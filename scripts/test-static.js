@@ -35,6 +35,7 @@ console.log('\n── offline checks ──────────────�
 const rpcModules = [
   'auth', 'stores', 'orders', 'agents', 'clients', 'products',
   'delivery', 'payments', 'storefront', 'billing', 'admin', 'helpers',
+  'notifications', 'mobile',
 ];
 
 await test('every rpc module imports and exports handlers', async () => {

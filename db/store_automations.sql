@@ -45,7 +45,8 @@ CREATE OR REPLACE FUNCTION public.schedule_store_automations() RETURNS trigger
 LANGUAGE plpgsql SET search_path = public AS $$
 DECLARE kind text;
 BEGIN
-  IF TG_OP = 'INSERT' THEN kind := 'order_created';
+  IF NEW.status = 'abandoned' THEN RETURN NEW; END IF;
+  IF TG_OP = 'INSERT' OR (TG_OP = 'UPDATE' AND OLD.status = 'abandoned') THEN kind := 'order_created';
   ELSIF NEW.payment_status = 'failed' AND OLD.payment_status IS DISTINCT FROM 'failed' THEN kind := 'payment_failed';
   ELSIF NEW.status IS DISTINCT FROM OLD.status THEN
     kind := CASE NEW.status WHEN 'confirmed' THEN 'order_confirmed' WHEN 'shipped' THEN 'order_shipped'

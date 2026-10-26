@@ -8,11 +8,17 @@ import { policyFor } from './policies.js';
 import { buildQuery, parseSelect, parseRange, ident } from './queryBuilder.js';
 import { autoSchemaEnabled, ensureShape, ensureColumns, ensureTable, withSelfHeal } from '../db/autoSchema.js';
 import { expectedSchema } from '../db/schemaModel.js';
+import { metaSettingWritable, metaWritePredicate } from './metaWriteGuard.js';
+import { validateLandingContent } from '../lib/salesLanding.js';
 
 export const restRouter = express.Router();
 
 /** Build the row-level restriction for a table + operation. */
 async function scopeFilter(ctx, table, policy, op, query) {
+  if (table === 'store_settings' && op !== 'read') {
+    const scope = await scopeFilter(ctx, '__settings_scope__', policy, op, query);
+    return { ...scope, where: [...scope.where, metaWritePredicate] };
+  }
   if (ctx.isServiceRole) return { where: [], params: [] };
   const isAdmin = await ctx.isSuperAdmin();
 
@@ -310,12 +316,21 @@ restRouter.post(
       .map((row) => `(${cols.map((c) => { params.push(row[c] ?? null); return `$${params.length}`; }).join(', ')})`)
       .join(', ');
 
-    let sql = `INSERT INTO public.${ident(table)} (${cols.map(ident).join(', ')}) VALUES ${valueSql}`;
+    let sql = `INSERT INTO public.${ident(table)} AS target (${cols.map(ident).join(', ')}) VALUES ${valueSql}`;
     const onConflict = req.query.on_conflict;
     if (prefs.resolution === 'merge' && onConflict) {
       const target = String(onConflict).split(',').map(ident).join(', ');
       const updates = cols.filter((c) => !String(onConflict).split(',').includes(c));
       sql += ` ON CONFLICT (${target}) DO UPDATE SET ${updates.map((c) => `${ident(c)} = EXCLUDED.${ident(c)}`).join(', ')}`;
+      // Authorize the existing row as well as the submitted row; never move another tenant's row.
+      const scope = await scopeFilter(ctx, table, policy, 'update', req.query);
+      const outerColumn = policy.storeColumn || policy.userColumn || (policy.scope === 'profile' ? 'id' : policy.parent?.column);
+      const shift = scope.where.map(w => {
+        const shifted = w.replace(/\$(\d+)/g, (_, n) => `$${Number(n) + params.length}`);
+        return outerColumn ? shifted.replaceAll(ident(outerColumn), `target.${ident(outerColumn)}`) : shifted;
+      });
+      params.push(...scope.params);
+      if (shift.length) sql += ` WHERE ${shift.join(' AND ')}`;
     } else if (prefs.resolution === 'ignore' && onConflict) {
       sql += ` ON CONFLICT (${String(onConflict).split(',').map(ident).join(', ')}) DO NOTHING`;
     }
@@ -329,7 +344,7 @@ restRouter.post(
       // too, but the frontend depends on these upserts, so match-then-write
       // gives them the same outcome instead of an error.
       if (e?.code !== '42P10' || !onConflict) throw e;
-      rows = await emulateUpsert(ctx, table, rowsIn, String(onConflict).split(','), prefs.resolution);
+      rows = await emulateUpsert(ctx, table, rowsIn, String(onConflict).split(','), prefs.resolution, policy);
     }
 
     const inserted = await stripHidden(rows, policy, ctx);
@@ -343,7 +358,7 @@ restRouter.post(
  * ON CONFLICT without a unique index: find the matching row by the conflict
  * columns, then UPDATE it (merge) or leave it alone (ignore); insert when absent.
  */
-async function emulateUpsert(ctx, table, rowsIn, conflictCols, resolution) {
+async function emulateUpsert(ctx, table, rowsIn, conflictCols, resolution, policy) {
   const out = [];
   for (const row of rowsIn) {
     const keys = conflictCols.map((c) => c.trim()).filter((c) => c in row);
@@ -354,6 +369,7 @@ async function emulateUpsert(ctx, table, rowsIn, conflictCols, resolution) {
       const found = await ctx.q(`SELECT * FROM public.${ident(table)} WHERE ${where} LIMIT 1`, params);
       existing = found[0] || null;
     }
+    if (existing) await authorizeWrite(ctx, table, policy, existing, 'update');
     if (existing && resolution === 'ignore') { out.push(existing); continue; }
     if (existing) {
       const setCols = Object.keys(row).filter((c) => !keys.includes(c));
@@ -363,8 +379,8 @@ async function emulateUpsert(ctx, table, rowsIn, conflictCols, resolution) {
       const keyParams = keys.map((c) => row[c]);
       const where = keys.map((c, i) => `${ident(c)} = $${setCols.length + i + 1}`).join(' AND ');
       const updated = await ctx.q(
-        `UPDATE public.${ident(table)} SET ${sets} WHERE ${where} RETURNING *`,
-        [...params, ...keyParams],
+        `UPDATE public.${ident(table)} SET ${sets} WHERE ${where}${policy.storeColumn ? ` AND ${ident(policy.storeColumn)} = $${params.length + keyParams.length + 1}` : ''} RETURNING *`,
+        [...params, ...keyParams, ...(policy.storeColumn ? [existing[policy.storeColumn]] : [])],
       );
       out.push(...updated);
       continue;
@@ -435,6 +451,8 @@ function hasFilter(query) {
 
 /** Extra guard for writes: the payload's store/user must belong to the caller. */
 async function authorizeWrite(ctx, table, policy, row, op, query = {}) {
+  if (table === 'store_sales_pages' && row?.content != null) validateLandingContent(row.content);
+  if (table === 'store_settings' && !metaSettingWritable(row)) throw forbidden('Use the protected Meta configuration endpoint');
   if (ctx.isServiceRole) return;
   if (policy.scope === 'denied') throw forbidden(`table "${table}" is not writable over the data API`);
   if (await ctx.isSuperAdmin()) return;

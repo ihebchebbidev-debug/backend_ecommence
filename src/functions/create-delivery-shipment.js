@@ -12,6 +12,7 @@ export default async function createDeliveryShipment(req, res, ctx) {
 
   const order = await ctx.q('SELECT * FROM public.orders WHERE id=$1 AND store_id=$2', [order_id, store_id]).then((r) => r[0]);
   if (!order) return json(res, { error: 'Commande introuvable' }, 404);
+  if (order.customer_handles_delivery) return json(res, { error: 'Le client prend en charge la livraison. Aucun envoi au transporteur.', code: 'customer_handles_delivery' }, 409);
   if (order.status !== 'confirmed') return json(res, { error: 'La commande doit être confirmée avant l\'expédition' }, 400);
 
   const shop = await ctx.q('SELECT currency FROM public.platform_stores WHERE id=$1', [store_id]).then(r => r[0]);

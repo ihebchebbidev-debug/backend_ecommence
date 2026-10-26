@@ -3,10 +3,11 @@ import { forbidden, unauthorized, badRequest } from '../lib/errors.js';
 import coupons from './coupons.js';
 import builder from './builder.js';
 import billing from './billing.js';
+import { validateTeamAccess } from '../lib/teamPermissions.js';
 
 // Permissions, shops and the confirmation-agent flag are re-read from the member
 // row on every call, so an owner's change (or deactivation) applies immediately.
-async function loadSession(ctx, sessionId) {
+export async function loadSession(ctx, sessionId) {
   const session = await ctx.one(
     `SELECT s.id, s.store_id, m.name AS member_name, s.expires_at, s.team_member_id,
             m.role AS member_role, m.permissions, m.status, m.store_id AS home_store_id,
@@ -50,7 +51,7 @@ function hasPermission(session, permission, action = 'read') {
   return perms[key]?.[act] === true && (act === 'read' || perms[key]?.read === true);
 }
 
-function need(session, key, action = 'read') {
+export function need(session, key, action = 'read') {
   if (!hasPermission(session, key, action)) throw forbidden('Insufficient permissions');
 }
 
@@ -113,6 +114,7 @@ export default {
   async team_owner_members({p_store_id}, ctx) {
     ctx.requireAuth();
     await ctx.assertStoreAccess(p_store_id,['owner','admin']);
+    if (!await ctx.hasStorePermission(p_store_id, 'canManageTeam')) throw forbidden('Insufficient team permissions');
     return ctx.q(`SELECT m.id,m.store_id,m.store_ids,m.name,m.first_name,m.last_name,m.username,m.email,m.phone,m.role,m.shift,m.status,m.available,m.permissions,m.is_confirmation_agent,m.last_login_at,m.created_at,
       EXISTS(SELECT 1 FROM public.agent_sessions s WHERE s.team_member_id=m.id AND s.expires_at>now() AND s.last_seen_at>now()-interval '90 seconds') AS online
       FROM public.team_members m JOIN public.platform_stores h ON h.id=m.store_id
@@ -153,6 +155,8 @@ export default {
   async team_save_member({ p_store_id, p_member_id = null, p_values = {} }, ctx) {
     ctx.requireAuth();
     await ctx.assertStoreAccess(p_store_id, ['owner','admin']);
+    if (!await ctx.hasStorePermission(p_store_id, 'canManageTeam')) throw forbidden('Insufficient team permissions');
+    validateTeamAccess(p_values.role, p_values.permissions);
     return ctx.tx(async t => {
       const home = await t.one('SELECT id,user_id FROM public.platform_stores WHERE id=$1 AND deleted_at IS NULL FOR UPDATE', [p_store_id]);
       if (!home) throw forbidden('Shop unavailable');
@@ -188,6 +192,22 @@ export default {
       if (values.password_hash || values.status !== 'active') await t.q('DELETE FROM public.agent_sessions WHERE team_member_id=$1',[row.id]);
       await t.q(`INSERT INTO public.activity_log(store_id,team_member_id,user_name,action,entity_type,entity_id,details) VALUES($1,$2,$3,$4,'team_member',$5,$6)`, [p_store_id,null,'Propriétaire',p_member_id ? 'member_update' : 'member_create',row.id,values.name]);
       return row;
+    });
+  },
+  /** Remove access atomically while retaining the member's audit history. */
+  async team_revoke_member({ p_store_id, p_member_id }, ctx) {
+    ctx.requireAuth();
+    await ctx.assertStoreAccess(p_store_id, ['owner','admin']);
+    if (!await ctx.hasStorePermission(p_store_id, 'canManageTeam')) throw forbidden('Insufficient team permissions');
+    return ctx.tx(async t => {
+      const home = await t.one('SELECT id FROM public.platform_stores WHERE id=$1 AND deleted_at IS NULL FOR UPDATE', [p_store_id]);
+      if (!home) throw forbidden('Shop unavailable');
+      const member = await t.one('SELECT id,name FROM public.team_members WHERE id=$1 AND store_id=$2 FOR UPDATE', [p_member_id,p_store_id]);
+      if (!member) throw forbidden('Member unavailable');
+      await t.q(`UPDATE public.team_members SET status='inactive', permissions='{}'::jsonb, store_ids=ARRAY[store_id] WHERE id=$1`, [p_member_id]);
+      await t.q('DELETE FROM public.agent_sessions WHERE team_member_id=$1', [p_member_id]);
+      await t.q(`INSERT INTO public.activity_log(store_id,team_member_id,user_name,action,entity_type,entity_id,details) VALUES($1,NULL,'Propriétaire','member_revoke','team_member',$2,$3)`, [p_store_id,p_member_id,member.name]);
+      return { id: member.id, revoked: true };
     });
   },
   async agent_get_orders(args, ctx) {

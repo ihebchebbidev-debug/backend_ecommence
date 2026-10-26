@@ -52,7 +52,8 @@ CREATE OR REPLACE FUNCTION public.record_commerce_order_event() RETURNS trigger
 LANGUAGE plpgsql SET search_path = public AS $$
 DECLARE kind text; payload jsonb;
 BEGIN
-  IF TG_OP = 'INSERT' THEN kind := 'order_created';
+  IF NEW.status = 'abandoned' THEN RETURN NEW; END IF;
+  IF TG_OP = 'INSERT' OR (TG_OP = 'UPDATE' AND OLD.status = 'abandoned') THEN kind := 'order_created';
   ELSIF NEW.status IN ('cancelled','canceled') AND OLD.status IS DISTINCT FROM NEW.status THEN kind := 'order_cancelled';
   END IF;
   payload := jsonb_build_object('order_number',NEW.order_number);

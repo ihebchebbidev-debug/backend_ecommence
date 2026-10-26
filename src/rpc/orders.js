@@ -5,6 +5,8 @@ import { createHash } from 'node:crypto';
 import { badRequest, forbidden } from '../lib/errors.js';
 import { id, text, couponCode, priceCheckout, major } from '../lib/commerce.js';
 import { cleanCheckoutAnswers, answersAsNotes } from '../lib/checkoutExtras.js';
+import { checkoutConsent, recordCheckoutConsent } from '../lib/metaCheckoutConsent.js';
+import { captureAbandoned } from '../lib/abandonedCheckout.js';
 
 const ORDER_COLUMNS_SECURE = `
   o.id, o.order_number, o.client_id, o.client_name, o.client_phone, o.product_id,
@@ -12,7 +14,7 @@ const ORDER_COLUMNS_SECURE = `
   o.notes, o.created_at, o.updated_at, o.confirmation_status, o.callback_scheduled_at,
   o.confirmation_notes, o.confirmed_at, o.store_id, o.bundle_id, o.bundle_name,
   o.bundle_label, o.bundle_price, o.bundle_quantity, o.currency, o.order_fee_amount_usd,
-  o.order_fee_charged_at, o.order_billing_status
+  o.order_fee_charged_at, o.order_billing_status, o.customer_handles_delivery
 `;
 
 function maskName(name) {
@@ -38,6 +40,7 @@ function projectSecureRow(row, canView) {
     quantity: row.quantity,
     amount: row.amount,
     delivery_fee: row.delivery_fee,
+    customer_handles_delivery: row.customer_handles_delivery === true,
     status: row.status,
     region: row.region,
     agent_id: row.agent_id,
@@ -290,6 +293,8 @@ export default {
     );
   },
 
+  async capture_abandoned_checkout(args, ctx) { return captureAbandoned(args, ctx); },
+
   async create_public_order(args, ctx) {
     const {
       p_store_id,
@@ -319,14 +324,17 @@ export default {
     const items = p_items.map((i) => ({ ...i, bundle_count: i?.bundle_id ? (i.bundle_count ?? 1) : undefined }));
     const code = couponCode(p_coupon_code);
     const fingerprint = createHash('sha256').update(JSON.stringify([items, code, client.phone])).digest('hex');
+    const adConsent = checkoutConsent(args.p_ad_match_consent, client.email);
 
     const BLOCKED = Symbol('blocked');
     const result = await ctx.tx(async (t) => {
+      let abandoned = null;
       // Serialize per shop: order numbers, coupon caps and stock stay consistent.
       await t.one('SELECT id FROM public.platform_stores WHERE id = $1 FOR UPDATE', [p_store_id]);
       if (requestId) {
-        const prior = await t.one('SELECT id, order_number, amount, checkout_fingerprint FROM public.orders WHERE store_id=$1 AND checkout_request_id=$2', [p_store_id, requestId]);
-        if (prior) {
+        const prior = await t.one('SELECT id, order_number, amount, status, checkout_fingerprint FROM public.orders WHERE store_id=$1 AND checkout_request_id=$2', [p_store_id, requestId]);
+        if (prior?.status === 'abandoned') { abandoned = prior; }
+        else if (prior) {
           if (prior.checkout_fingerprint !== fingerprint) throw badRequest('Checkout request reused with different content', { code: 'CHECKOUT_CONFLICT' });
           return [{ order_id: prior.id, order_number: prior.order_number, total: prior.amount }];
         }
@@ -403,7 +411,22 @@ export default {
       const orderNumber = String(seq.next_val).padStart(5, '0');
       const first = quote.rows[0];
 
-      const order = await t.one(
+      const orderValues = [
+        p_store_id, abandoned?.order_number || orderNumber, clientRow.id, client.name, client.phone, client.phone2,
+        first.product.id, first.product.name, first.qty, quote.total, quote.delivery, p_currency,
+        first.bundle?.id || null, first.bundle?.name || null, first.bundle?.label || null,
+        first.bundlePrice, first.bundle?.quantity || null,
+        text(p_payment_provider || p_payment_method || '', 60), client.address, client.city, client.region,
+        quote.subtotal, quote.discount, quote.coupon ? code : null, requestId, fingerprint,
+        client.notes, buyerIp, answers.length ? JSON.stringify(answers) : null,
+      ];
+      const order = abandoned ? await t.one(`UPDATE public.orders SET
+        order_number=$2,client_id=$3,client_name=$4,client_phone=$5,client_phone2=$6,
+        product_id=$7,product_name=$8,quantity=$9,amount=$10,delivery_fee=$11,currency=$12,status='pending',
+        bundle_id=$13,bundle_name=$14,bundle_label=$15,bundle_price=$16,bundle_quantity=$17,
+        payment_provider=$18,address=$19,city=$20,region=$21,merchandise_subtotal=$22,discount_amount=$23,
+        coupon_code=$24,checkout_request_id=$25,checkout_fingerprint=$26,notes=$27,client_ip=$28,checkout_answers=$29,
+        updated_at=now() WHERE store_id=$1 AND id=$30 AND status='abandoned' RETURNING id,order_number,amount`, [...orderValues, abandoned.id]) : await t.one(
         `INSERT INTO public.orders (
            store_id, order_number, client_id, client_name, client_phone, client_phone2,
            product_id, product_name, quantity, amount, delivery_fee, currency, status,
@@ -412,17 +435,10 @@ export default {
            coupon_code, checkout_request_id, checkout_fingerprint, notes, client_ip, checkout_answers, created_at, updated_at
          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'pending',$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29, now(), now())
          RETURNING id, order_number, amount`,
-        [
-          p_store_id, orderNumber, clientRow.id, client.name, client.phone, client.phone2,
-          first.product.id, first.product.name, first.qty, quote.total, quote.delivery, p_currency,
-          first.bundle?.id || null, first.bundle?.name || null, first.bundle?.label || null,
-          first.bundlePrice, first.bundle?.quantity || null,
-          text(p_payment_provider || p_payment_method || '', 60),
-          client.address, client.city, client.region,
-          quote.subtotal, quote.discount, quote.coupon ? code : null, requestId, fingerprint,
-          client.notes, buyerIp, answers.length ? JSON.stringify(answers) : null,
-        ],
+        orderValues,
       );
+
+      await recordCheckoutConsent(t, order.id, p_store_id, adConsent);
 
       for (const r of quote.rows) {
         await t.q(

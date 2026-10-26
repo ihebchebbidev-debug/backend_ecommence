@@ -18,6 +18,7 @@ import { seed } from './db/seed.js';
 import { schemaDrift } from './db/schemaModel.js';
 import { docsRouter } from './docs/router.js';
 import { startAutomationWorker } from './lib/automationWebhooks.js';
+import { startPushWorker } from './lib/pushWorker.js';
 import { checkUnsubscribeToken } from './lib/marketing.js';
 
 const log = createLogger('server');
@@ -170,6 +171,7 @@ if (isMain) {
     process.exit(1);
   }
   startAutomationWorker((sql, p) => pool.query(sql, p).then((r) => r.rows), log);
+  startPushWorker((sql, p) => pool.query(sql, p).then((r) => r.rows), log);
   server.listen(config.port, () => {
     log.info('listening', { url: `http://localhost:${config.port}`, env: config.env, autoSchema: config.autoSchema });
   });

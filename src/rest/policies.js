@@ -47,7 +47,7 @@ export const policies = {
   // Per-shop fraud lists; rows without store_id are legacy platform entries (admin only).
   ip_blacklist: store(),
   phone_blacklist: store(),
-  orders: store({ publicInsert: true }),
+  orders: store(), // Public checkout must use validated create_public_order.
   products: store({ publicRead: true }),
   product_bundles: store({ storeColumn: null, parent: { table: 'products', column: 'product_id' }, publicRead: true }),
   product_options: store({ storeColumn: null, parent: { table: 'products', column: 'product_id' }, publicRead: true }),
@@ -130,6 +130,9 @@ export const policies = {
   phone_otp_codes: denied(),
   platform_messaging_settings: denied(),
   auth_otp_codes: denied(),
+  ad_match_consents: denied(),
+  meta_capi_sent: denied(),
+  store_meta_capi: denied(),
 };
 
 export function policyFor(table) {

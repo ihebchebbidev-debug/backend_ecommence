@@ -441,6 +441,7 @@ CREATE TABLE IF NOT EXISTS public.orders (
   "confirmed_at"                     timestamptz,
   "created_at"                       timestamptz,
   "currency"                         text DEFAULT 'TND' NOT NULL,
+  "customer_handles_delivery"         boolean DEFAULT false NOT NULL,
   "deleted_at"                       timestamptz,
   "deleted_by"                       uuid,
   "delivery_fee"                     numeric DEFAULT 0 NOT NULL,

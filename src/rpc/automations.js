@@ -46,9 +46,9 @@ export default {
   async store_automations_list({ p_store_id }, ctx) {
     await permission(ctx, p_store_id, PERM);
     const rows = await ctx.q(`SELECT a.*,
-        (SELECT count(*)::int FROM public.store_automation_runs r WHERE r.automation_id=a.id AND r.sent_at IS NOT NULL) AS sent_30d,
-        (SELECT count(*)::int FROM public.store_automation_runs r WHERE r.automation_id=a.id AND r.skipped IS NOT NULL) AS skipped_30d,
-        (SELECT count(*)::int FROM public.store_automation_runs r WHERE r.automation_id=a.id AND r.sent_at IS NULL AND r.skipped IS NULL AND r.attempts >= $2) AS failed_30d,
+        (SELECT count(*)::int FROM public.store_automation_runs r WHERE r.automation_id=a.id AND r.sent_at IS NOT NULL AND r.sent_at>=now()-interval '30 days') AS sent_30d,
+        (SELECT count(*)::int FROM public.store_automation_runs r WHERE r.automation_id=a.id AND r.skipped IS NOT NULL AND r.created_at>=now()-interval '30 days') AS skipped_30d,
+        (SELECT count(*)::int FROM public.store_automation_runs r WHERE r.automation_id=a.id AND r.sent_at IS NULL AND r.skipped IS NULL AND r.attempts >= $2 AND r.created_at>=now()-interval '30 days') AS failed_30d,
         (SELECT count(*)::int FROM public.store_automation_runs r WHERE r.automation_id=a.id AND r.sent_at IS NULL AND r.skipped IS NULL AND r.attempts < $2) AS pending
       FROM public.store_automations a WHERE a.store_id=$1 ORDER BY a.created_at`, [p_store_id, MAX_ATTEMPTS]);
     const pending = await ctx.one('SELECT count(*)::int AS n FROM public.store_automation_runs WHERE store_id=$1 AND sent_at IS NULL AND skipped IS NULL AND attempts < $2', [p_store_id, MAX_ATTEMPTS]);
@@ -78,7 +78,7 @@ export default {
     return ctx.q(`SELECT r.id, r.automation_id, a.name AS automation_name, r.step_index, r.send_at, r.sent_at, r.skipped, r.error, r.attempts,
         o.order_number, o.client_name,
         CASE WHEN r.sent_at IS NOT NULL THEN 'sent' WHEN r.skipped IS NOT NULL THEN 'skipped' WHEN r.attempts >= $3 THEN 'failed' ELSE 'pending' END AS state,
-        CASE WHEN r.step_index = 0 THEN a.channel ELSE a.steps->(r.step_index - 1)->>'channel' END AS channel
+        r.definition->>'channel' AS channel
       FROM public.store_automation_runs r
       JOIN public.store_automations a ON a.id = r.automation_id
       LEFT JOIN public.orders o ON o.id = r.order_id

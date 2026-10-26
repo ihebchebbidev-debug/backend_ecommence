@@ -112,7 +112,7 @@ export async function sendAutomation(a, order, shopName, settings) {
 }
 
 export async function processDueRuns(q, log) {
-  const runs = await q(`SELECT r.id, r.attempts, r.order_id, r.step_index, a.id AS automation_id, a.name, a.channel, a.message, a.subject, a.email_to, a.webhook_url,
+  const runs = await q(`SELECT r.id, r.attempts, r.order_id, r.step_index, r.definition, a.id AS automation_id, a.name, a.channel, a.message, a.subject, a.email_to, a.webhook_url,
       a.trigger_event, a.active, a.conditions, a.steps,
       o.client_name, o.client_phone, o.order_number, o.amount, o.delivery_fee, o.currency, o.product_name, o.quantity, o.city, o.region,
       o.tracking_number, o.status, o.deleted_at, o.payment_provider,
@@ -128,7 +128,7 @@ export async function processDueRuns(q, log) {
   if (!runs.length) return;
   const settings = await getMessagingSettings();
   for (const r of runs) {
-    const def = stepDefinition(r, r.step_index || 0);
+    const def = r.definition || stepDefinition(r, r.step_index || 0);
     let skipped = null;
     if (!r.active) skipped = 'automation_paused';
     else if (!def) skipped = 'step_removed';
@@ -154,5 +154,9 @@ export async function processDueRuns(q, log) {
       log?.warn?.('store automation send failed', { run: r.id, message: msg });
     }
   }
-  await q(`DELETE FROM public.store_automation_runs WHERE created_at < now() - interval '30 days'`);
+  await q(`DELETE FROM public.store_automation_runs WHERE created_at < now() - interval '30 days'
+    AND (sent_at IS NOT NULL OR skipped IS NOT NULL OR attempts >= $1)
+    AND NOT EXISTS(SELECT 1 FROM public.store_automation_runs pending
+      WHERE pending.automation_id=store_automation_runs.automation_id AND pending.order_id=store_automation_runs.order_id
+      AND pending.sent_at IS NULL AND pending.skipped IS NULL AND pending.attempts < $1)`, [MAX_ATTEMPTS]);
 }
