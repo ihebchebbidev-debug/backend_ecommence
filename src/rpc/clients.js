@@ -15,11 +15,14 @@ export default {
     await ctx.assertStoreAccess(p_store_id);
     const canView = await ctx.canViewCustomerData(p_store_id);
     const rows = await ctx.q(
-      `SELECT id, name, phone, email, city, region, status, note, created_at, updated_at, store_id
-       FROM public.clients WHERE store_id = $1`,
+      `SELECT c.id, c.name, c.phone, c.email, c.city, c.region, c.status, c.note, c.created_at, c.updated_at, c.store_id,
+         (EXISTS (SELECT 1 FROM public.orders o JOIN public.store_plan_usage pu ON pu.order_id = o.id AND pu.commission_status = 'unpaid' WHERE o.client_id = c.id)
+          AND NOT EXISTS (SELECT 1 FROM public.orders o WHERE o.client_id = c.id AND o.status IS DISTINCT FROM 'abandoned'
+            AND NOT EXISTS (SELECT 1 FROM public.store_plan_usage pu WHERE pu.order_id = o.id AND pu.commission_status = 'unpaid'))) AS plan_hidden
+       FROM public.clients c WHERE c.store_id = $1`,
       [p_store_id],
     );
-    return rows.map((c) => ({
+    return rows.map((c) => ({ c, canView: canView && c.plan_hidden !== true })).map(({ c, canView }) => ({
       id: c.id,
       name: canView ? c.name : maskName(c.name),
       phone: canView ? c.phone : maskPhone(c.phone),

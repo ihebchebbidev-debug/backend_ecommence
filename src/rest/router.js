@@ -141,7 +141,31 @@ function requestedStoreId(query, col) {
   return eqValue(query[key]);
 }
 
+// Orders with an unpaid plan commission never expose customer fields over REST.
+async function maskPlanHidden(rows, policy, ctx) {
+  const cols = policy.planMask || policy.planMaskClients;
+  if (!cols?.length || ctx.isServiceRole || !rows.length || (ctx.userId && (await ctx.isSuperAdmin()))) return rows;
+  const ids = rows.map((r) => r.id).filter(Boolean);
+  if (!ids.length) return rows;
+  const sql = policy.planMask
+    ? "SELECT order_id AS id FROM public.store_plan_usage WHERE order_id = ANY($1::uuid[]) AND commission_status = 'unpaid'"
+    // A customer is hidden when every one of their orders is hidden (same rule as the customers list).
+    : `SELECT c.id FROM unnest($1::uuid[]) AS c(id)
+        WHERE EXISTS (SELECT 1 FROM public.orders o JOIN public.store_plan_usage pu ON pu.order_id = o.id AND pu.commission_status = 'unpaid' WHERE o.client_id = c.id)
+          AND NOT EXISTS (SELECT 1 FROM public.orders o WHERE o.client_id = c.id
+                AND NOT EXISTS (SELECT 1 FROM public.store_plan_usage pu WHERE pu.order_id = o.id AND pu.commission_status = 'unpaid'))`;
+  const hidden = new Set((await ctx.q(sql, [ids])).map((r) => String(r.id)));
+  if (!hidden.size) return rows;
+  return rows.map((row) => {
+    if (!hidden.has(String(row.id))) return row;
+    const copy = { ...row };
+    for (const c of cols) if (c in copy) copy[c] = null;
+    return copy;
+  });
+}
+
 async function stripHidden(rows, policy, ctx) {
+  rows = await maskPlanHidden(rows, policy, ctx);
   if (ctx.isServiceRole || !policy.hidden?.length) return rows;
   // Admin-only fields (e.g. internal notes) stay visible to super admins;
   // credential material is never returned.
@@ -327,7 +351,9 @@ restRouter.post(
       const outerColumn = policy.storeColumn || policy.userColumn || (policy.scope === 'profile' ? 'id' : policy.parent?.column);
       const shift = scope.where.map(w => {
         const shifted = w.replace(/\$(\d+)/g, (_, n) => `$${Number(n) + params.length}`);
-        return outerColumn ? shifted.replaceAll(ident(outerColumn), `target.${ident(outerColumn)}`) : shifted;
+        const qualified = outerColumn ? shifted.replaceAll(ident(outerColumn), `target.${ident(outerColumn)}`) : shifted;
+        // The Meta guard names "key", which exists in both target and EXCLUDED inside ON CONFLICT.
+        return w === metaWritePredicate ? qualified.replace('"key"', 'target."key"') : qualified;
       });
       params.push(...scope.params);
       if (shift.length) sql += ` WHERE ${shift.join(' AND ')}`;

@@ -1,8 +1,14 @@
 // Plans & Billing — spec 3.10
 import { forbidden, badRequest } from '../lib/errors.js';
 
-// DEV/TEST: set UNLOCK_ALL_PLANS=true to grant every feature and unlimited quotas.
-export const ALL_PLANS_UNLOCKED = String(process.env.UNLOCK_ALL_PLANS ?? 'true').toLowerCase() === 'true';
+const PLAN_CODES = ['essentiel', 'expansion', 'performance', 'prestige'];
+async function requireSuperAdmin(ctx) {
+  ctx.requireAuth();
+  if (!(await ctx.isSuperAdmin())) throw forbidden('Super admin access required');
+}
+
+// Plans are billing-only (Essentiel/Expansion/Performance/Prestige): features and counts are never gated by plan.
+export const ALL_PLANS_UNLOCKED = true;
 
 const BOOLEAN_LIMIT_KEYS = new Set([
   'can_advanced_analytics', 'can_api_access', 'can_custom_domain', 'can_export_data',
@@ -35,6 +41,24 @@ async function getPlanLimits(ctx, storeId) {
 }
 
 export default {
+  /** plan_overview(p_store_id) → billing dashboard numbers (quota, usage, commissions, history). */
+  async plan_overview({ p_store_id }, ctx) {
+    await ctx.assertStoreAccess(p_store_id);
+    const row = await ctx.one('SELECT public.plan_overview($1) AS v', [p_store_id]);
+    return row?.v ?? null;
+  },
+
+  /** plan_switch(p_store_id, p_plan_code, p_billing_cycle) — one-click change until payment APIs exist. */
+  async plan_switch({ p_store_id, p_plan_code, p_billing_cycle }, ctx) {
+    await ctx.assertStoreAccess(p_store_id, ['owner', 'admin']);
+    const code = String(p_plan_code || '');
+    const cycle = String(p_billing_cycle || 'monthly');
+    if (!['essentiel', 'expansion', 'performance', 'prestige'].includes(code)) throw badRequest('Invalid plan');
+    if (!['monthly', 'annual'].includes(cycle)) throw badRequest('Invalid billing cycle');
+    await ctx.tx((t) => t.one('SELECT public.plan_switch($1, $2, $3)', [p_store_id, code, cycle]));
+    const row = await ctx.one('SELECT public.plan_overview($1) AS v', [p_store_id]);
+    return row?.v ?? null;
+  },
   /** plan_allows(p_store_id, p_feature_key) → boolean */
   async plan_allows({ p_store_id, p_feature_key }, ctx) {
     await ctx.assertStoreAccess(p_store_id);
@@ -156,16 +180,102 @@ export default {
     });
   },
 
-  /** get_active_exchange_rate(p_base?, p_target?) → number */
+  /** get_active_exchange_rate(p_base?, p_target?) → number (admin manual rate wins over the daily automatic rate). */
   async get_active_exchange_rate({ p_base, p_target } = {}, ctx) {
-    const base = p_base || 'USD';
-    const target = p_target || 'TND';
+    const base = String(p_base || 'USD').toUpperCase();
+    const target = String(p_target || 'TND').toUpperCase();
     const row = await ctx.one(
       `SELECT rate FROM public.currency_rates
-        WHERE is_active = true AND base_currency = $1 AND target_currency = $2
-        ORDER BY updated_at DESC LIMIT 1`,
+        WHERE is_active = true AND base_currency = $1 AND target_currency = $2 AND rate > 0
+        ORDER BY (source = 'manual') DESC, updated_at DESC LIMIT 1`,
       [base, target],
     );
     return row ? Number(row.rate) : null;
   },
+
+  // ── Platform admin: shop plans, commissions and the exchange rate ──────────
+  /** admin_plan_shops(p_search?) → every shop with its plan, usage and unpaid commissions. */
+  async admin_plan_shops({ p_search } = {}, ctx) {
+    await requireSuperAdmin(ctx);
+    const search = String(p_search || '').trim();
+    const shops = await ctx.q(
+      `SELECT s.id, s.store_name AS name, p.email FROM public.platform_stores s LEFT JOIN public.profiles p ON p.id = s.user_id
+        WHERE ($1 = '' OR s.store_name ILIKE '%' || $1 || '%' OR p.email ILIKE '%' || $1 || '%')
+        ORDER BY s.created_at DESC NULLS LAST LIMIT 100`, [search]);
+    const out = [];
+    for (const s of shops) {
+      const ov = await ctx.tx((t) => t.one('SELECT public.plan_overview($1) AS v', [s.id]));
+      out.push({ store_id: s.id, name: s.name, email: s.email, overview: ov?.v ?? null });
+    }
+    return out;
+  },
+
+  /** admin_plan_set(p_store_id, p_plan_code, p_billing_cycle) — applies immediately, including downgrades. */
+  async admin_plan_set({ p_store_id, p_plan_code, p_billing_cycle }, ctx) {
+    await requireSuperAdmin(ctx);
+    const code = String(p_plan_code || '');
+    const cycle = code === 'essentiel' ? 'monthly' : String(p_billing_cycle || 'monthly');
+    if (!PLAN_CODES.includes(code)) throw badRequest('Invalid plan');
+    if (!['monthly', 'annual'].includes(cycle)) throw badRequest('Invalid billing cycle');
+    await ctx.tx(async (t) => {
+      await t.one('SELECT public.plan_refresh($1)', [p_store_id]);
+      // Clear any paid period so plan_switch applies a downgrade now instead of scheduling it.
+      await t.q('UPDATE public.store_plan_state SET period_end = NULL, pending_plan_code = NULL WHERE store_id = $1', [p_store_id]);
+      await t.one('SELECT public.plan_switch($1, $2, $3)', [p_store_id, code, cycle]);
+      await t.q(`INSERT INTO public.store_plan_events (store_id, kind, details) VALUES ($1, 'admin_plan_set', $2)`,
+        [p_store_id, { to: code, cycle, by: ctx.userId }]);
+      await t.q(`INSERT INTO public.admin_audit_logs (action, performed_by, target_store_id, details) VALUES ('PLAN_SET', $1, $2, $3)`,
+        [ctx.userId, p_store_id, { plan: code, cycle }]);
+    });
+    const row = await ctx.one('SELECT public.plan_overview($1) AS v', [p_store_id]);
+    return row?.v ?? null;
+  },
+
+  /** admin_commission_adjust(p_store_id, p_action, p_reason) — mark every unpaid commission 'paid' or 'cancelled' (waived). */
+  async admin_commission_adjust({ p_store_id, p_action, p_reason }, ctx) {
+    await requireSuperAdmin(ctx);
+    const action = String(p_action || '');
+    if (!['paid', 'cancelled'].includes(action)) throw badRequest('Invalid action');
+    const reason = String(p_reason || '').trim().slice(0, 300);
+    if (!reason) throw badRequest('A reason is required');
+    const res = await ctx.tx(async (t) => {
+      const rows = await t.q(`UPDATE public.store_plan_usage SET commission_status = $2, resolved_at = now()
+        WHERE store_id = $1 AND commission_status = 'unpaid' RETURNING commission_usd`, [p_store_id, action]);
+      const total = rows.reduce((a, r) => a + Number(r.commission_usd || 0), 0);
+      await t.q(`INSERT INTO public.store_plan_events (store_id, kind, details) VALUES ($1, $2, $3)`,
+        [p_store_id, action === 'paid' ? 'commission_paid' : 'commission_waived', { orders: rows.length, amount_usd: total, reason }]);
+      await t.q(`INSERT INTO public.admin_audit_logs (action, performed_by, target_store_id, details) VALUES ($1, $2, $3, $4)`,
+        [action === 'paid' ? 'COMMISSION_PAID' : 'COMMISSION_WAIVED', ctx.userId, p_store_id, { orders: rows.length, amount_usd: total, reason }]);
+      return { orders: rows.length, amount_usd: total };
+    });
+    return res;
+  },
+
+  /** admin_exchange_rate_set(p_rate) — manual USD→TND rate; null/0 removes it so the daily rate applies. */
+  async admin_exchange_rate_set({ p_rate }, ctx) {
+    await requireSuperAdmin(ctx);
+    const rate = p_rate == null || p_rate === '' ? 0 : Number(p_rate);
+    if (rate !== 0 && !(rate >= 2 && rate <= 5)) throw badRequest('Rate must be between 2 and 5 TND per USD');
+    await ctx.tx(async (t) => {
+      await t.q(`UPDATE public.currency_rates SET is_active = false, updated_at = now() WHERE base_currency='USD' AND target_currency='TND' AND source='manual'`);
+      if (rate) await t.q(`INSERT INTO public.currency_rates (base_currency, target_currency, rate, is_active, source) VALUES ('USD','TND',$1,true,'manual')`, [rate]);
+      await t.q(`INSERT INTO public.admin_audit_logs (action, performed_by, details) VALUES ('EXCHANGE_RATE_SET', $1, $2)`, [ctx.userId, { rate: rate || null }]);
+    });
+    return rateInfo(ctx);
+  },
+
+  /** admin_exchange_rate_info() → current manual and automatic USD→TND rates. */
+  async admin_exchange_rate_info(_args, ctx) {
+    await requireSuperAdmin(ctx);
+    return rateInfo(ctx);
+  },
+};
+
+async function rateInfo(ctx) {
+  {
+    const rows = await ctx.q(`SELECT DISTINCT ON (source) source, rate, updated_at FROM public.currency_rates
+      WHERE base_currency='USD' AND target_currency='TND' AND is_active AND source IN ('manual','auto') ORDER BY source, updated_at DESC`);
+    const by = Object.fromEntries(rows.map((r) => [r.source, { rate: Number(r.rate), updated_at: r.updated_at }]));
+    return { manual: by.manual ?? null, auto: by.auto ?? null, effective: (by.manual ?? by.auto)?.rate ?? 3.1 };
+  }
 };

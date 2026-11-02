@@ -29,6 +29,11 @@ export async function deliverPending(q, log) {
     WHERE delivered_at IS NULL AND attempts < $1 AND next_attempt_at <= now() ORDER BY id LIMIT 50`, [MAX_ATTEMPTS]);
   for (const ev of events) {
     const hooks = await q('SELECT id, provider, url FROM public.store_automation_webhooks WHERE store_id=$1 AND enabled', [ev.store_id]);
+    // Unpaid plan commission: customer fields never leave the platform.
+    const orderId = ev.data?.order_id || ev.data?.id;
+    if (orderId && (await q("SELECT 1 FROM public.store_plan_usage WHERE order_id::text=$1 AND commission_status='unpaid'", [String(orderId)])).length) {
+      ev.data = { ...ev.data, customer_name: null, customer_phone: null, customer_phone2: null, client_name: null, client_phone: null, client_phone2: null, address: null, city: null, notes: null, email: null, customer_email: null, customer_data_hidden: true };
+    }
     let allOk = true;
     for (const h of hooks) {
       const res = await postWebhook(h.url, { event: ev.event, store_id: ev.store_id, sent_at: new Date().toISOString(), order: ev.data });

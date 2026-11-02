@@ -84,7 +84,8 @@ export default {
     const actor = await orderActor(args, ctx, 'modify');
     const orderId = id(args.p_order_id), key = idempotencyKey(args.p_idempotency_key);
     const patch = cleanPatch(args.p_patch);
-    if (!actor.visible && Object.keys(patch).some(k => k !== 'notes')) throw forbidden('Customer data locked');
+    const planHidden = await ctx.one("SELECT 1 FROM public.store_plan_usage WHERE order_id=$1 AND commission_status='unpaid'", [id(args.p_order_id)]);
+    if ((!actor.visible || planHidden) && Object.keys(patch).some(k => k !== 'notes')) throw forbidden('Customer data locked');
     return ctx.tx(async t => once(t, actor.storeId, key, 'order_update', async () => {
       await setActor(t, actor);
       const row = await t.one('SELECT id, updated_at FROM public.orders WHERE id=$1 AND store_id=$2 AND deleted_at IS NULL FOR UPDATE', [orderId, actor.storeId]);
@@ -129,7 +130,8 @@ export default {
     if (!exists) throw forbidden('Order not found in this store');
     const rows = await ctx.q(`SELECT id, kind, actor_kind, actor_name, changes, created_at FROM public.order_events
       WHERE store_id=$1 AND order_id=$2 ORDER BY created_at DESC, id DESC LIMIT 200`, [actor.storeId, orderId]);
-    if (actor.visible) return rows;
+    const planHidden = await ctx.one("SELECT 1 FROM public.store_plan_usage WHERE order_id=$1 AND commission_status='unpaid'", [orderId]);
+    if (actor.visible && !planHidden) return rows;
     const hidden = ['client_name', 'client_phone', 'city', 'address', 'notes'];
     return rows.map(r => ({ ...r, changes: Object.fromEntries(Object.entries(r.changes || {}).map(([k, v]) => [k, hidden.includes(k) ? { from: null, to: null, hidden: true } : v])) }));
   },

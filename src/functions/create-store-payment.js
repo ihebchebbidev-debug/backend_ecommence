@@ -1,8 +1,10 @@
 // Port of supabase/functions/create-store-payment/index.ts (anon storefront checkout)
+import { minorUnit } from './_shared/currencyUnits.js';
 import { json, methodGuard } from './_shared/respond.js';
 
 import { decryptPaymentJson } from './_shared/paymentCrypto.js';
 import { konnectBase, paymeeBase, FLOUCI_BASE, clictopayCall } from './_shared/storeGateways.js';
+import { readPaymentStore, storePaymentUrls, paymentAttemptUrls } from './_shared/storePaymentUrls.js';
 
 export const STRIPE_CURRENCIES = ['EUR', 'USD', 'GBP', 'CAD', 'CHF', 'MAD', 'DZD', 'AED', 'SAR', 'QAR'];
 
@@ -15,8 +17,8 @@ export function withParams(url, params) {
 
 export default async function createStorePayment(req, res, ctx) {
   if (methodGuard(req, res)) return;
-  const { order_id, store_id, successUrl, failUrl, provider: requestedProvider } = req.body || {};
-  if (!order_id || !store_id || !successUrl || !failUrl) return json(res, { error: 'Paramètres manquants' }, 400);
+  const { order_id, store_id, provider: requestedProvider } = req.body || {};
+  if (!order_id || !store_id) return json(res, { error: 'Paramètres manquants' }, 400);
 
   const order = await ctx.q(
     `SELECT o.id, o.order_number, o.store_id, o.amount, o.currency, o.status, o.payment_status, o.client_name, o.client_phone,
@@ -61,6 +63,13 @@ export default async function createStorePayment(req, res, ctx) {
     return json(res, { error: `Devise ${currency} non prise en charge par ${integration.provider}` }, 409);
   }
 
+  let successUrl, failUrl, cancelUrl, webhook;
+  try {
+    const store = await readPaymentStore(ctx, store_id);
+    if (!store || store.status !== 'active') return json(res, { error: 'Magasin inactif' }, 403);
+    ({ successUrl, failUrl, cancelUrl, webhook } = paymentAttemptUrls(storePaymentUrls(store, integration.provider), order_id, String(order.order_number)));
+  } catch { return json(res, { error: 'Public payment addresses are not configured' }, 503); }
+
   let creds;
   try { creds = decryptPaymentJson(integration.credentials_encrypted, integration.credentials_iv, integration.credentials_version); }
   catch { return json(res, { error: 'Erreur de déchiffrement des identifiants' }, 500); }
@@ -70,7 +79,6 @@ export default async function createStorePayment(req, res, ctx) {
     ['pending', integration.provider, order_id],
   );
 
-  const webhook = `${(process.env.PUBLIC_FUNCTIONS_BASE_URL || process.env.PUBLIC_URL || '').replace(/\/+$/, '')}/functions/v1/store-payment-callback`;
   const description = `Commande ${order.order_number}`;
 
   if (integration.provider === 'konnect') {
@@ -133,7 +141,7 @@ export default async function createStorePayment(req, res, ctx) {
         email: order.client_email || `client+${order.order_number}@noreply.tn`,
         phone: order.client_phone || '',
         return_url: withParams(successUrl, { order: order_id, status: 'success' }),
-        cancel_url: withParams(failUrl, { order: order_id, status: 'failed' }),
+        cancel_url: cancelUrl,
         webhook_url: webhook,
         order_id: String(order_id),
       }),
@@ -195,10 +203,10 @@ export default async function createStorePayment(req, res, ctx) {
       'payment_intent_data[metadata][order_id]': order_id,
       'line_items[0][quantity]': '1',
       'line_items[0][price_data][currency]': currency.toLowerCase(),
-      'line_items[0][price_data][unit_amount]': String(Math.round(amountTnd * 100)),
+      'line_items[0][price_data][unit_amount]': String(Math.round(amountTnd * minorUnit(currency))),
       'line_items[0][price_data][product_data][name]': description,
-      success_url: withParams(successUrl, { order: order_id, status: 'success' }),
-      cancel_url: withParams(failUrl, { order: order_id, status: 'failed' }),
+      success_url: `${withParams(successUrl, { order: order_id, status: 'success' })}&session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: cancelUrl,
     });
     const r = await fetch('https://api.stripe.com/v1/checkout/sessions', {
       method: 'POST',

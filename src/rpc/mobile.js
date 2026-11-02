@@ -33,7 +33,8 @@ export default {
     // EXISTS avoids duplicated results when several parcels point to one order.
     // Two rows suffice to reject ambiguity without exposing another customer's data.
     const rows = await ctx.q(`SELECT o.id,o.order_number,o.client_name,o.client_phone,o.region,o.amount,o.currency,o.status,
-      COALESCE((SELECT sum(i.quantity) FROM public.order_items i WHERE i.order_id=o.id),o.quantity,0)::int AS item_count
+      COALESCE((SELECT sum(i.quantity) FROM public.order_items i WHERE i.order_id=o.id),o.quantity,0)::int AS item_count,
+      EXISTS (SELECT 1 FROM public.store_plan_usage pu WHERE pu.order_id=o.id AND pu.commission_status='unpaid') AS plan_hidden
       FROM public.orders o WHERE o.store_id=$1 AND o.deleted_at IS NULL AND (
         lower(o.order_number)=lower($2) OR lower(o.tracking_number)=lower($2) OR EXISTS (
           SELECT 1 FROM public.delivery_shipments s WHERE s.store_id=$1 AND s.order_id=o.id AND lower(s.tracking_number)=lower($2)
@@ -41,10 +42,11 @@ export default {
     if (rows.length === 0) return { outcome: 'not_found' };
     if (rows.length > 1) return { outcome: 'ambiguous' };
     const order = rows[0];
+    const show = visible && order.plan_hidden !== true;
     return { outcome: 'found', order: {
       id: order.id, order_number: order.order_number,
-      client_name: visible ? order.client_name : '••••', client_phone: visible ? order.client_phone : '',
-      region: visible ? order.region : '', amount: order.amount, currency: order.currency ?? store.currency,
+      client_name: show ? order.client_name : '••••', client_phone: show ? order.client_phone : '',
+      region: show ? order.region : '', amount: order.amount, currency: order.currency ?? store.currency,
       status: order.status, item_count: order.item_count,
     } };
   },

@@ -8,7 +8,7 @@ export const SECTION_TYPES = [
   'rich_text', 'gallery', 'contact', 'footer', 'single_product', 'spacer',
   'product_main', 'related_products', 'collection_grid', 'custom_code', 'contact_form',
   'hero_slider', 'social_icons', 'order_confirmation', 'order_summary', 'next_steps',
-  'review_wall', 'faq_cards', 'cta_banner',
+  'review_wall', 'faq_cards', 'cta_banner', 'before_after', 'stock_urgency', 'how_it_works', 'comparison', 'benefits_grid', 'key_stats',
   'product_reviews', 'photo_reviews', 'frequently_bought', 'upsell_products', 'volume_discount', 'gift_boxes', 'cart_reminder', 'thank_you_upsell',
 ];
 

@@ -3,6 +3,7 @@ import { json } from './_shared/respond.js';
 import crypto from 'node:crypto';
 
 import { decryptPaymentJson } from './_shared/paymentCrypto.js';
+import { minorUnit, sameCurrency } from './_shared/currencyUnits.js';
 import { konnectBase, paymeeBase, FLOUCI_BASE, clictopayCall } from './_shared/storeGateways.js';
 
 function timingSafeEqualStr(a, b) {
@@ -20,7 +21,7 @@ export default async function storePaymentCallback(req, res, ctx) {
   if (req.method === 'GET') {
     for (const [k, v] of Object.entries(req.query || {})) body[k] = v;
   } else {
-    body = req.body || {};
+    body = { ...(req.query || {}), ...(req.body || {}) };
   }
 
   // Stripe sends an event whose session id is data.object.id (body.id is the event id).
@@ -42,21 +43,13 @@ export default async function storePaymentCallback(req, res, ctx) {
     [String(paymentRef)],
   ).then((r) => r[0]);
 
-  if (!order) {
-    // Fallback only for orders that never received a gateway reference; never
-    // overwrite an existing reference, and only persist it after verification.
-    const fallbackOrderId = body.order_id || body.orderId || null;
-    if (!fallbackOrderId) return json(res, { ok: false, message: 'Commande introuvable par ref' }, 404);
-    const fo = await ctx.q(
-      'SELECT id, store_id, amount, currency, payment_status, payment_ref, payment_provider FROM public.orders WHERE id=$1',
-      [fallbackOrderId],
-    ).then((r) => r[0]);
-    if (!fo) return json(res, { ok: false, message: 'Commande introuvable' }, 404);
-    if (fo.payment_ref && fo.payment_ref !== String(paymentRef)) {
-      return json(res, { ok: false, message: 'Référence de paiement différente' }, 409);
-    }
-    order = fo;
-  }
+  // Only the reference saved when this shop created the payment identifies the order.
+  // Accepting a caller-chosen order id would let one paid payment settle another order.
+  if (!order) return json(res, { ok: false, message: 'Commande introuvable par ref' }, 404);
+
+  // Per-shop endpoint hints never choose credentials or override reference ownership.
+  if (body.store_id && String(body.store_id) !== String(order.store_id)) return json(res, { ok: false, message: 'Store mismatch' }, 403);
+  if (body.provider && String(body.provider) !== String(order.payment_provider)) return json(res, { ok: false, message: 'Provider mismatch' }, 403);
 
   if (order.payment_status === 'paid') return json(res, { ok: true, message: 'Déjà payé', idempotent: true });
 
@@ -78,6 +71,7 @@ export default async function storePaymentCallback(req, res, ctx) {
   let gatewayStatus = '';
   let gatewayAmountTnd = null;
   let gatewayRef = null;
+  let gatewayCurrency = null;
 
   if (provider === 'konnect') {
     const apiKey = creds.api_key || '';
@@ -91,8 +85,8 @@ export default async function storePaymentCallback(req, res, ctx) {
     const p = d.payment || d;
     gatewayStatus = String(p.status || '').toLowerCase();
     // Konnect amounts are in millimes for TND and in cents for EUR/USD.
-    const unit = String(p.token || order.currency || 'TND').toUpperCase() === 'TND' ? 1000 : 100;
-    gatewayAmountTnd = Number(p.amount || p.amountDue || 0) / unit;
+    gatewayCurrency = String(p.token || 'TND').toUpperCase();
+    gatewayAmountTnd = Number(p.amount || 0) / minorUnit(gatewayCurrency);
     gatewayRef = p.id || paymentRef;
     const gatewayOrderId = p.orderId || p.order_id || null;
     if (gatewayOrderId && String(gatewayOrderId) !== String(order.id)) {
@@ -120,6 +114,7 @@ export default async function storePaymentCallback(req, res, ctx) {
       return json(res, { ok: false, message: 'Checksum invalide' }, 400);
     }
     gatewayStatus = psBool ? 'completed' : 'failed';
+    gatewayCurrency = 'TND'; // Paymee only settles TND
     gatewayAmountTnd = Number(body.amount || 0);
     gatewayRef = paymentRef;
   } else if (provider === 'flouci') {
@@ -136,6 +131,7 @@ export default async function storePaymentCallback(req, res, ctx) {
     if (d.success === false) return json(res, { ok: false, message: 'Flouci: paiement introuvable' }, 404);
     const result = d.result || {};
     gatewayStatus = String(result.status || '').toLowerCase() === 'success' ? 'completed' : String(result.status || '').toLowerCase();
+    gatewayCurrency = 'TND'; // Flouci only settles TND (millimes)
     gatewayAmountTnd = Number(result.amount || 0) / 1000;
     gatewayRef = paymentRef;
     const tracking = result.developer_tracking_id || null;
@@ -152,11 +148,12 @@ export default async function storePaymentCallback(req, res, ctx) {
     });
     if (!r.ok) return json(res, { ok: false, message: `Stripe HTTP ${r.status}` }, 502);
     const s = await r.json();
-    if (s.client_reference_id && String(s.client_reference_id) !== String(order.id)) {
+    if (String(s.client_reference_id || '') !== String(order.id)) {
       return json(res, { ok: false, message: 'Paiement lié à une autre commande' }, 409);
     }
     gatewayStatus = s.payment_status === 'paid' ? 'completed' : s.status === 'expired' ? 'expired' : 'pending';
-    gatewayAmountTnd = Number(s.amount_total || 0) / 100;
+    gatewayCurrency = String(s.currency || '').toUpperCase();
+    gatewayAmountTnd = Number(s.amount_total || 0) / minorUnit(gatewayCurrency);
     gatewayRef = s.id;
   } else if (provider === 'clictopay') {
     if (!creds.username || !creds.password) return json(res, { ok: false, message: 'Identifiants ClicToPay manquants' }, 500);
@@ -165,6 +162,7 @@ export default async function storePaymentCallback(req, res, ctx) {
     // orderStatus: 2 = paid, 3 = reversed, 4 = refunded, 6 = declined; 0/1 still in progress.
     const st = Number(data.orderStatus);
     gatewayStatus = st === 2 ? 'completed' : [3, 4, 6].includes(st) ? 'failed' : 'pending';
+    gatewayCurrency = String(data.currency || '') === '788' ? 'TND' : String(data.currency || '');
     gatewayAmountTnd = Number(data.amount || 0) / 1000;
     gatewayRef = paymentRef;
   } else {
@@ -174,11 +172,16 @@ export default async function storePaymentCallback(req, res, ctx) {
   const isPaid = ['completed', 'paid', 'success', 'successful'].includes(gatewayStatus);
   const isFailed = ['failed', 'expired', 'canceled', 'cancelled', 'declined'].includes(gatewayStatus);
 
-  if (isPaid && gatewayAmountTnd !== null) {
+  if (isPaid) {
     const expected = Number(order.amount) || 0;
-    if (Math.abs(gatewayAmountTnd - expected) > 0.001) {
-      // Keep the order pending for manual review instead of marking it failed.
-      return json(res, { ok: false, message: 'Montant mismatch' }, 400);
+    const currencyOk = sameCurrency(gatewayCurrency, order.currency || 'TND');
+    if (!currencyOk || gatewayAmountTnd === null || Math.abs(gatewayAmountTnd - expected) > 0.0005) {
+      // Keep the order pending and tell the seller once, so a wrong payment is never silent.
+      await ctx.q(`INSERT INTO public.commerce_notifications(store_id,type,source_id,event_key,data)
+        SELECT store_id,'payment_mismatch',id,$2,jsonb_build_object('order_number',order_number,'amount',amount,'currency',currency,'paid_amount',$3::numeric,'paid_currency',$4::text)
+        FROM public.orders WHERE id=$1 ON CONFLICT(event_key) DO NOTHING`,
+        [order.id, `payment_mismatch:${order.id}:${gatewayRef || paymentRef}`, gatewayAmountTnd ?? 0, gatewayCurrency || '']).catch(() => null);
+      return json(res, { ok: false, message: currencyOk ? 'Montant mismatch' : 'Devise différente' }, 400);
     }
   }
 

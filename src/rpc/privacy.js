@@ -162,7 +162,8 @@ export default {
     const stores = await ctx.q('SELECT * FROM public.platform_stores WHERE user_id = $1 AND deleted_at IS NULL', [ctx.userId]);
     const ids = stores.map((s) => s.id);
     const products = ids.length ? await ctx.q('SELECT * FROM public.products WHERE store_id = ANY($1::uuid[])', [ids]) : [];
-    const orders = ids.length ? await ctx.q('SELECT * FROM public.orders WHERE store_id = ANY($1::uuid[]) AND deleted_at IS NULL ORDER BY created_at', [ids]) : [];
+    const orders = ids.length ? await ctx.q(`SELECT o.*, EXISTS (SELECT 1 FROM public.store_plan_usage pu WHERE pu.order_id = o.id AND pu.commission_status = 'unpaid') AS plan_hidden
+      FROM public.orders o WHERE o.store_id = ANY($1::uuid[]) AND o.deleted_at IS NULL ORDER BY o.created_at`, [ids]).then((rows) => rows.map(({ plan_hidden, ...o }) => (plan_hidden ? { ...o, client_name: null, client_phone: null, client_phone2: null, address: null, notes: null } : o))) : [];
     await ctx.q('UPDATE public.privacy_export_requests SET downloaded_at = now() WHERE id = $1', [req.id]);
     const strip = (s) => Object.fromEntries(Object.entries(s).filter(([k]) => !/secret|token|password|key/i.test(k)));
     return { generated_at: new Date().toISOString(), account: profile, shops: stores.map(strip), products, orders };

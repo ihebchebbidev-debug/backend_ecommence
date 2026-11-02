@@ -12,7 +12,7 @@ export default async function createDeliveryShipment(req, res, ctx) {
 
   const order = await ctx.q('SELECT * FROM public.orders WHERE id=$1 AND store_id=$2', [order_id, store_id]).then((r) => r[0]);
   if (!order) return json(res, { error: 'Commande introuvable' }, 404);
-  if (order.customer_handles_delivery) return json(res, { error: 'Le client prend en charge la livraison. Aucun envoi au transporteur.', code: 'customer_handles_delivery' }, 409);
+  if (order.customer_handles_delivery) return json(res, { error: 'Commande sans société de livraison. Aucun envoi au transporteur.', code: 'customer_handles_delivery' }, 409);
   if (order.status !== 'confirmed') return json(res, { error: 'La commande doit être confirmée avant l\'expédition' }, 400);
 
   const shop = await ctx.q('SELECT currency FROM public.platform_stores WHERE id=$1', [store_id]).then(r => r[0]);
@@ -23,6 +23,11 @@ export default async function createDeliveryShipment(req, res, ctx) {
   const sub = await ctx.q('SELECT customer_data_locked FROM public.store_subscriptions WHERE store_id=$1', [store_id]).then((r) => r[0]);
   if (sub?.customer_data_locked) {
     return json(res, { error: 'Débloquez les données clients avant l\'envoi à la livraison. (Données clients masquées — rechargez votre solde ou activez votre abonnement.)', code: 'customer_data_locked' }, 403);
+  }
+
+  const planHidden = await ctx.q("SELECT 1 FROM public.store_plan_usage WHERE order_id=$1 AND commission_status='unpaid'", [order.id]).then((r) => r[0]);
+  if (planHidden) {
+    return json(res, { error: 'Les coordonnées de ce client sont masquées tant que la commission de dépassement n\'est pas réglée.', code: 'plan_commission_unpaid' }, 403);
   }
 
   let provider;

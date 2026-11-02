@@ -14,7 +14,8 @@ const ORDER_COLUMNS_SECURE = `
   o.notes, o.created_at, o.updated_at, o.confirmation_status, o.callback_scheduled_at,
   o.confirmation_notes, o.confirmed_at, o.store_id, o.bundle_id, o.bundle_name,
   o.bundle_label, o.bundle_price, o.bundle_quantity, o.currency, o.order_fee_amount_usd,
-  o.order_fee_charged_at, o.order_billing_status, o.customer_handles_delivery
+  o.order_fee_charged_at, o.order_billing_status, o.customer_handles_delivery,
+  EXISTS (SELECT 1 FROM public.store_plan_usage pu WHERE pu.order_id = o.id AND pu.commission_status = 'unpaid') AS plan_hidden
 `;
 
 function maskName(name) {
@@ -28,7 +29,9 @@ function maskPhone(phone) {
   return '********';
 }
 
-function projectSecureRow(row, canView) {
+function projectSecureRow(row, storeCanView) {
+  // Unpaid overage commission hides this order's customer data on every read path.
+  const canView = storeCanView && row.plan_hidden !== true;
   return {
     id: row.id,
     order_number: row.order_number,
@@ -66,9 +69,11 @@ function projectSecureRow(row, canView) {
   };
 }
 
-function projectListRow(row, canView) {
+function projectListRow(row, storeCanView) {
+  const canView = storeCanView && row.plan_hidden !== true;
   return {
-    ...projectSecureRow(row, canView),
+    ...projectSecureRow(row, storeCanView),
+    plan_hidden: row.plan_hidden === true,
     address: canView ? row.address : null,
     city: row.city,
     client_phone2: canView ? row.client_phone2 : maskPhone(row.client_phone2),
@@ -88,7 +93,7 @@ export default {
     await ctx.assertStoreAccess(p_store_id);
     const canView = await ctx.canViewCustomerData(p_store_id);
     const rows = await ctx.q(
-      `SELECT o.*, pr.image_url AS product_image_url
+      `SELECT o.*, pr.image_url AS product_image_url, EXISTS (SELECT 1 FROM public.store_plan_usage pu WHERE pu.order_id = o.id AND pu.commission_status = 'unpaid') AS plan_hidden
        FROM public.orders o
        LEFT JOIN public.products pr ON pr.id = o.product_id
        WHERE o.store_id = $1 AND o.deleted_at IS NULL
@@ -140,7 +145,7 @@ export default {
     const offsetIdx = params.length;
 
     const rows = await ctx.q(
-      `SELECT o.*, pr.image_url AS product_image_url, COUNT(*) OVER() AS total_count
+      `SELECT o.*, pr.image_url AS product_image_url, COUNT(*) OVER() AS total_count, EXISTS (SELECT 1 FROM public.store_plan_usage pu WHERE pu.order_id = o.id AND pu.commission_status = 'unpaid') AS plan_hidden
        FROM public.orders o
        LEFT JOIN public.products pr ON pr.id = o.product_id
        WHERE ${where}
@@ -270,7 +275,7 @@ export default {
     if (!order) return [];
     await ctx.assertStoreAccess(order.store_id);
     const canView = await ctx.canViewCustomerData(order.store_id);
-    const row = await ctx.one(`SELECT o.* FROM public.orders o WHERE o.id = $1`, [p_order_id]);
+    const row = await ctx.one(`SELECT o.*, EXISTS (SELECT 1 FROM public.store_plan_usage pu WHERE pu.order_id = o.id AND pu.commission_status = 'unpaid') AS plan_hidden FROM public.orders o WHERE o.id = $1`, [p_order_id]);
     if (!row) return [];
     const items = await ctx.q(
       `SELECT id, product_id, product_name, bundle_id, bundle_name, bundle_label,

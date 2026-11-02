@@ -2,9 +2,12 @@ import { badRequest } from './errors.js';
 export function validateLandingContent(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw badRequest('Invalid sales content');
   for (const key of ['quick_order','capture_abandoned']) if (key in value && typeof value[key] !== 'boolean') throw badRequest('Invalid checkout setting');
+  if ('checkout_position' in value && !['after_product', 'before_content', 'after_content'].includes(value.checkout_position)) throw badRequest('Invalid checkout position');
   if (value.blocks == null) return;
   if (!Array.isArray(value.blocks) || value.blocks.length > 30) throw badRequest('Invalid page blocks');
   for (const block of value.blocks) {
+    if (!block || typeof block !== 'object' || Array.isArray(block)) throw badRequest('Invalid page block');
+    if ('gallery' in block && (block.type !== 'image' || typeof block.gallery !== 'string' || !block.gallery.length || block.gallery.length > 80)) throw badRequest('Invalid gallery');
     for (const [key, allowed] of Object.entries({ format: ['paragraph','heading','subheading','list'], width: ['full','narrow'], spacing: ['compact','normal','airy'] })) {
       if (key in block && !allowed.includes(block[key])) throw badRequest('Invalid block layout');
     }

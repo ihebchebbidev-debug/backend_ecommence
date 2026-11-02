@@ -21,6 +21,7 @@ import createPayment from './create-payment.js';
 import paymentCallback from './payment-callback.js';
 import createStorePayment from './create-store-payment.js';
 import storePaymentCallback from './store-payment-callback.js';
+import storePaymentUrls from './store-payment-urls.js';
 import savePaymentIntegration from './save-payment-integration.js';
 import testPaymentGateway from './test-payment-gateway.js';
 import testStorePayment from './test-store-payment.js';
@@ -46,6 +47,7 @@ export const edgeFunctions = {
   'payment-callback': { handler: paymentCallback, verifyJwt: false },
   'create-store-payment': { handler: createStorePayment, verifyJwt: false },
   'store-payment-callback': { handler: storePaymentCallback, verifyJwt: false },
+  'store-payment-urls': { handler: storePaymentUrls, verifyJwt: true },
   'save-payment-integration': { handler: savePaymentIntegration, verifyJwt: true },
   'test-payment-gateway': { handler: testPaymentGateway, verifyJwt: true },
   'test-store-payment': { handler: testStorePayment, verifyJwt: true },

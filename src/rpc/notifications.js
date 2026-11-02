@@ -7,7 +7,7 @@ export async function allowedTypes(ctx, storeId) {
   await ctx.assertStoreAccess(id(storeId));
   const types = [];
   if (await ctx.hasStorePermission(storeId,'canManageOrders')) types.push('order_created','order_cancelled');
-  if (await ctx.hasStorePermission(storeId,'canManagePayments')) types.push('payment_received');
+  if (await ctx.hasStorePermission(storeId,'canManagePayments')) types.push('payment_received', 'payment_mismatch');
   if (await ctx.hasStorePermission(storeId,'canManageInventory')) types.push('low_stock');
   return types;
 }

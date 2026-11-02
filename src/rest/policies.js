@@ -24,11 +24,14 @@ export const policies = {
   // ── store-scoped operational data ───────────────────────────────────
   activity_log: store({ writeRoles: [] }),
   agent_sessions: denied(),
+  store_plan_state: denied(),
+  store_plan_usage: denied(),
+  store_plan_events: denied(),
   campaigns: store(),
   carriers: store({ publicRead: true }),
   categories: store({ publicRead: true }),
   checkout_settings: store({ publicRead: true }),
-  clients: store({ writeRoles: ['owner', 'admin', 'manager'] }),
+  clients: store({ writeRoles: ['owner', 'admin', 'manager'], planMaskClients: ['name', 'phone', 'phone2', 'email', 'address', 'city', 'notes'] }),
   // Writes/reads go through permission-checked coupon RPCs; no public enumeration.
   coupons: store({ writeRoles: [] }),
   commerce_notifications: denied(),
@@ -47,7 +50,7 @@ export const policies = {
   // Per-shop fraud lists; rows without store_id are legacy platform entries (admin only).
   ip_blacklist: store(),
   phone_blacklist: store(),
-  orders: store(), // Public checkout must use validated create_public_order.
+  orders: store({ planMask: ['client_name', 'client_phone', 'client_phone2', 'address', 'notes', 'confirmation_notes'] }), // Public checkout must use validated create_public_order.
   products: store({ publicRead: true }),
   product_bundles: store({ storeColumn: null, parent: { table: 'products', column: 'product_id' }, publicRead: true }),
   product_options: store({ storeColumn: null, parent: { table: 'products', column: 'product_id' }, publicRead: true }),
