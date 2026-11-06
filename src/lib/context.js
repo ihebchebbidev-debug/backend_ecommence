@@ -3,6 +3,7 @@
 // receives one of these and must use it for every authorization decision.
 import { q, one, tx } from '../db.js';
 import { forbidden, unauthorized } from './errors.js';
+import { effectivePermission } from './rolePermissionDefaults.js';
 
 export function makeContext({ userId = null, role = 'anon', claims = null } = {}) {
   const cache = new Map();
@@ -74,9 +75,9 @@ export function makeContext({ userId = null, role = 'anon', claims = null } = {}
       if (ctx.isServiceRole) return 'owner';
       if (!ctx.userId) return null;
       return memo(`role:${storeId}`, async () => {
-        const owner = await one('SELECT 1 FROM public.platform_stores WHERE id = $1 AND user_id = $2', [storeId, ctx.userId]);
+        const owner = await one('SELECT 1 FROM public.platform_stores WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL', [storeId, ctx.userId]);
         if (owner) return 'owner';
-        const m = await one('SELECT role FROM public.store_members WHERE store_id = $1 AND user_id = $2 LIMIT 1', [storeId, ctx.userId]);
+        const m = await one(`SELECT role FROM public.store_members WHERE store_id = $1 AND user_id = $2 AND deleted_at IS NULL AND coalesce(status,'') NOT IN ('pending','disabled','inactive','revoked','suspended') LIMIT 1`, [storeId, ctx.userId]);
         return m?.role ?? null;
       });
     },
@@ -88,7 +89,7 @@ export function makeContext({ userId = null, role = 'anon', claims = null } = {}
         const rows = await q(
           `SELECT id FROM public.platform_stores WHERE user_id = $1 AND deleted_at IS NULL
            UNION
-           SELECT store_id AS id FROM public.store_members WHERE user_id = $1`,
+           SELECT store_id AS id FROM public.store_members WHERE user_id = $1 AND deleted_at IS NULL AND coalesce(status,'') NOT IN ('pending','disabled','inactive','revoked','suspended')`,
           [ctx.userId],
         );
         return rows.map((r) => r.id);
@@ -111,6 +112,13 @@ export function makeContext({ userId = null, role = 'anon', claims = null } = {}
       return role;
     },
 
+    /** Throws unless the caller's role holds `permission` on the store (owner/service/super admin always pass). */
+    async assertStorePermission(storeId, permission) {
+      if (!permission || ctx.isServiceRole) return;
+      if (await ctx.isSuperAdmin()) return;
+      if (!(await ctx.hasStorePermission(storeId, permission))) throw forbidden('Insufficient permission for this store');
+    },
+
     /** has_store_permission(p_store_id, p_permission) */
     async hasStorePermission(storeId, permission) {
       const role = await ctx.storeRole(storeId);
@@ -120,10 +128,7 @@ export function makeContext({ userId = null, role = 'anon', claims = null } = {}
         'SELECT permissions FROM public.store_role_permissions WHERE store_id = $1 AND role = $2 LIMIT 1',
         [storeId, role],
       );
-      const perms = row?.permissions;
-      if (!perms) return role === 'admin';
-      if (Array.isArray(perms)) return perms.includes(permission);
-      return perms[permission] === true;
+      return effectivePermission(role, row?.permissions, permission);
     },
 
     /** can_view_customer_data(p_store_id) — the customer-data lock system. */

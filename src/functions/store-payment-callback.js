@@ -4,7 +4,7 @@ import crypto from 'node:crypto';
 
 import { decryptPaymentJson } from './_shared/paymentCrypto.js';
 import { minorUnit, sameCurrency } from './_shared/currencyUnits.js';
-import { konnectBase, paymeeBase, FLOUCI_BASE, clictopayCall } from './_shared/storeGateways.js';
+import { konnectBase, paymeeBase, FLOUCI_BASE, clictopayCall, flouciIsPaid, clictopayHasError } from './_shared/storeGateways.js';
 
 function timingSafeEqualStr(a, b) {
   if (a.length !== b.length) return false;
@@ -35,13 +35,22 @@ export default async function storePaymentCallback(req, res, ctx) {
     if (!o?.payment_ref) return json(res, { ok: false, message: 'Aucun paiement en cours' }, 404);
     body = { ...body, payment_ref: o.payment_ref };
   }
-  const paymentRef = stripeSession || body.mdOrder || body.payment_id || body.payment_ref || body.paymentRef || body.id || body.reference || body.token || null;
+  const paymentRef = stripeSession || body.mdOrder || body.orderId || body.payment_id || body.payment_ref || body.paymentRef || body.id || body.reference || body.token || null;
   if (!paymentRef) return json(res, { ok: false, message: 'payment_ref manquant' }, 400);
 
   let order = await ctx.q(
     'SELECT id, store_id, amount, currency, payment_status, payment_ref, payment_provider FROM public.orders WHERE payment_ref=$1',
     [String(paymentRef)],
   ).then((r) => r[0]);
+  // An earlier link for the same order (checkout opened twice) stays valid.
+  if (!order) {
+    order = await ctx.q(
+      `SELECT o.id, o.store_id, o.amount, o.currency, o.payment_status, o.payment_ref, COALESCE(r.provider, o.payment_provider) AS payment_provider
+         FROM public.order_payment_refs r JOIN public.orders o ON o.id = r.order_id AND o.store_id = r.store_id
+        WHERE r.payment_ref=$1`,
+      [String(paymentRef)],
+    ).then((r) => r[0]).catch(() => null);
+  }
 
   // Only the reference saved when this shop created the payment identifies the order.
   // Accepting a caller-chosen order id would let one paid payment settle another order.
@@ -115,7 +124,8 @@ export default async function storePaymentCallback(req, res, ctx) {
     }
     gatewayStatus = psBool ? 'completed' : 'failed';
     gatewayCurrency = 'TND'; // Paymee only settles TND
-    gatewayAmountTnd = Number(body.amount || 0);
+    // Amount must be present and numeric; it is compared with the order total below.
+    gatewayAmountTnd = body.amount === undefined || body.amount === null || body.amount === '' || !Number.isFinite(Number(body.amount)) ? null : Number(body.amount);
     gatewayRef = paymentRef;
   } else if (provider === 'flouci') {
     // Never trust the webhook body: ask Flouci for the payment's real state.
@@ -128,9 +138,10 @@ export default async function storePaymentCallback(req, res, ctx) {
     });
     if (!r.ok) return json(res, { ok: false, message: `Flouci HTTP ${r.status}` }, 502);
     const d = await r.json().catch(() => ({}));
-    if (d.success === false) return json(res, { ok: false, message: 'Flouci: paiement introuvable' }, 404);
+    if (d.success !== true) return json(res, { ok: false, message: 'Flouci: paiement non confirmé' }, 404);
     const result = d.result || {};
-    gatewayStatus = String(result.status || '').toLowerCase() === 'success' ? 'completed' : String(result.status || '').toLowerCase();
+    // Paid only when both Flouci signals agree (success flag + SUCCESS status).
+    gatewayStatus = flouciIsPaid(d) ? 'completed' : String(result.status || '').toLowerCase();
     gatewayCurrency = 'TND'; // Flouci only settles TND (millimes)
     gatewayAmountTnd = Number(result.amount || 0) / 1000;
     gatewayRef = paymentRef;
@@ -159,6 +170,7 @@ export default async function storePaymentCallback(req, res, ctx) {
     if (!creds.username || !creds.password) return json(res, { ok: false, message: 'Identifiants ClicToPay manquants' }, 500);
     const { ok, status, data } = await clictopayCall(creds, 'getOrderStatusExtended.do', { orderId: String(paymentRef), language: 'fr' });
     if (!ok) return json(res, { ok: false, message: `ClicToPay HTTP ${status}` }, 502);
+    if (clictopayHasError(data)) return json(res, { ok: false, message: `ClicToPay: ${data.errorMessage || `erreur ${data.errorCode}`}` }, 502);
     // orderStatus: 2 = paid, 3 = reversed, 4 = refunded, 6 = declined; 0/1 still in progress.
     const st = Number(data.orderStatus);
     gatewayStatus = st === 2 ? 'completed' : [3, 4, 6].includes(st) ? 'failed' : 'pending';
@@ -186,11 +198,13 @@ export default async function storePaymentCallback(req, res, ctx) {
   }
 
   const newStatus = isPaid ? 'paid' : isFailed ? 'failed' : 'pending';
-  if (gatewayRef) {
-    await ctx.q('UPDATE public.orders SET payment_status=$1, payment_ref=$2, updated_at=now() WHERE id=$3', [newStatus, String(gatewayRef), order.id]);
-  } else {
-    await ctx.q('UPDATE public.orders SET payment_status=$1, updated_at=now() WHERE id=$2', [newStatus, order.id]);
-  }
+  // A paid order never goes back to pending/failed, even if a late callback races in.
+  const updated = await ctx.q(
+    `UPDATE public.orders SET payment_status=$1, payment_ref=COALESCE($2, payment_ref), updated_at=now()
+      WHERE id=$3 AND payment_status IS DISTINCT FROM 'paid' RETURNING id`,
+    [newStatus, gatewayRef ? String(gatewayRef) : null, order.id],
+  );
+  if (!updated.length) return json(res, { ok: true, message: 'Déjà payé', idempotent: true });
 
   return json(res, { ok: true, status: newStatus });
 }

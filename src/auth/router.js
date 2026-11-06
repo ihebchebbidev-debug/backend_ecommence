@@ -173,10 +173,16 @@ authRouter.post(
     );
 
     // Mirror the live `handle_new_user` trigger: create the profile row.
+    // Sign-up sends first_name/last_name (not full_name); join them so the
+    // profile name is never empty when the user gave one.
+    const fullName =
+      data.full_name ||
+      [data.first_name, data.last_name].filter((v) => typeof v === 'string' && v.trim()).join(' ').trim() ||
+      null;
     await q(
       `INSERT INTO public.profiles (id, email, full_name, country, status)
        VALUES ($1, $2, $3, $4, 'active') ON CONFLICT (id) DO NOTHING`,
-      [user.id, user.email, data.full_name || null, data.country || null],
+      [user.id, user.email, fullName, data.country || null],
     );
     if (verifiedPhone) {
       await q('UPDATE auth.users SET phone = $1, phone_confirmed_at = now() WHERE id = $2', [verifiedPhone, user.id]);

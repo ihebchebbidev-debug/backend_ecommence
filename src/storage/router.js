@@ -107,6 +107,20 @@ async function requireWriteAccess(req, bucket, key) {
   return userId;
 }
 
+/**
+ * Authorize a read. Public buckets are open; private buckets need the service
+ * role, a platform admin, or the file owner (path under `<user-id>/…`).
+ */
+async function requireReadAccess(req, bucketRow, key) {
+  if (bucketRow.public) return;
+  if (req.ctx.isServiceRole) return;
+  const userId = req.ctx.userId;
+  // Same answer as a missing file so private paths cannot be probed.
+  if (!userId) throw notFound('Object not found', { code: 'NoSuchKey' });
+  if (await req.ctx.isAnyAdmin()) return;
+  if (!`${key}/`.startsWith(`${userId}/`)) throw notFound('Object not found', { code: 'NoSuchKey' });
+}
+
 async function writeObject(req, bucket, key, file, upsert) {
   const existing = await one('SELECT id FROM storage.objects WHERE bucket_id = $1 AND name = $2', [bucket, key]);
   if (existing && !upsert) throw new ApiError(409, 'The resource already exists', { code: 'Duplicate' });
@@ -182,8 +196,9 @@ storageRouter.get(
   '/object/public/:bucket/*',
   asyncHandler(async (req, res) => {
     const bucket = req.params.bucket;
-    await requireBucket(bucket);
+    const bucketRow = await requireBucket(bucket);
     const key = safeKey(req.params[0]);
+    if (!bucketRow.public) throw notFound('Object not found', { code: 'NoSuchKey' });
     const row = await one('SELECT mime_type FROM storage.objects WHERE bucket_id = $1 AND name = $2', [bucket, key]);
     if (!row) throw notFound('Object not found', { code: 'NoSuchKey' });
     res.set('Cache-Control', 'public, max-age=3600');
@@ -197,8 +212,9 @@ storageRouter.get(
   '/object/:bucket/*',
   asyncHandler(async (req, res) => {
     const bucket = req.params.bucket;
-    await requireBucket(bucket);
+    const bucketRow = await requireBucket(bucket);
     const key = safeKey(req.params[0]);
+    await requireReadAccess(req, bucketRow, key);
     const row = await one('SELECT * FROM storage.objects WHERE bucket_id = $1 AND name = $2', [bucket, key]);
     if (!row) throw notFound('Object not found', { code: 'NoSuchKey' });
     res.type(row.mime_type || 'application/octet-stream');
@@ -244,6 +260,13 @@ storageRouter.post(
     const bucket = req.params.bucket;
     await requireBucket(bucket);
     const { prefix = '', limit = 100, offset = 0, sortBy } = req.body || {};
+    // Listing needs a session; non-admins only see their own `<user-id>/` folder.
+    if (!req.ctx.isServiceRole) {
+      if (!req.ctx.userId) throw unauthorized('JWT required');
+      if (!(await req.ctx.isAnyAdmin()) && !`${prefix}`.startsWith(`${req.ctx.userId}/`)) {
+        throw forbidden(`Listing is limited to "${req.ctx.userId}/"`);
+      }
+    }
     const col = ['name', 'created_at', 'updated_at'].includes(sortBy?.column) ? sortBy.column : 'name';
     const dir = sortBy?.order === 'desc' ? 'DESC' : 'ASC';
     const rows = await q(
@@ -267,5 +290,8 @@ storageRouter.post(
 // ── buckets ──────────────────────────────────────────────────────────
 storageRouter.get(
   '/bucket',
-  asyncHandler(async (_req, res) => res.json(await q('SELECT * FROM storage.buckets ORDER BY id'))),
+  asyncHandler(async (req, res) => {
+    if (!req.ctx.isServiceRole && !(req.ctx.userId && (await req.ctx.isAnyAdmin()))) throw forbidden('admin role required');
+    return res.json(await q('SELECT * FROM storage.buckets ORDER BY id'));
+  }),
 );

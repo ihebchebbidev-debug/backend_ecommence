@@ -205,6 +205,7 @@ BEGIN
   from_code := st.plan_code;
   IF from_code = p_code AND st.billing_cycle = p_cycle THEN RETURN st; END IF;
   IF public.plan_rank(p_code) < public.plan_rank(from_code) AND st.period_end IS NOT NULL AND now() < st.period_end THEN
+    IF st.pending_plan_code = p_code THEN RETURN st; END IF;
     UPDATE public.store_plan_state SET pending_plan_code = p_code, updated_at = now() WHERE store_id = p_store RETURNING * INTO st;
     INSERT INTO public.store_plan_events (store_id, kind, details) VALUES (p_store, 'downgrade_scheduled', jsonb_build_object('from', from_code, 'to', p_code, 'at', st.period_end));
     RETURN st;
@@ -255,3 +256,20 @@ BEGIN
     'hidden_orders', (SELECT count(*) FROM public.store_plan_usage WHERE store_id = p_store AND commission_status = 'unpaid'),
     'events', (SELECT coalesce(jsonb_agg(e ORDER BY e.created_at DESC), '[]'::jsonb) FROM (SELECT kind, details, created_at FROM public.store_plan_events WHERE store_id = p_store ORDER BY created_at DESC LIMIT 20) e));
 END $$;
+
+-- Every subscription event (plan change, scheduled/applied downgrade, expiry, admin change,
+-- commission paid/waived) becomes one seller notification, whatever path recorded it.
+CREATE OR REPLACE FUNCTION public.plan_event_notify() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF to_regclass('public.commerce_notifications') IS NULL THEN RETURN NEW; END IF;
+  -- admin_plan_set always accompanies a plan_changed row; notify once.
+  IF NEW.kind = 'admin_plan_set' THEN RETURN NEW; END IF;
+  INSERT INTO public.commerce_notifications(store_id, type, source_id, event_key, data)
+  VALUES (NEW.store_id, 'plan_update', NEW.store_id, 'plan_update:' || NEW.id,
+          jsonb_build_object('kind', NEW.kind, 'from', NEW.details->>'from', 'to', coalesce(NEW.details->>'to', NEW.details->>'plan_code'), 'at', NEW.details->>'at'))
+  ON CONFLICT (event_key) DO NOTHING;
+  RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS store_plan_events_notify ON public.store_plan_events;
+CREATE TRIGGER store_plan_events_notify AFTER INSERT ON public.store_plan_events
+  FOR EACH ROW EXECUTE FUNCTION public.plan_event_notify();

@@ -55,9 +55,12 @@ export default {
     const cycle = String(p_billing_cycle || 'monthly');
     if (!['essentiel', 'expansion', 'performance', 'prestige'].includes(code)) throw badRequest('Invalid plan');
     if (!['monthly', 'annual'].includes(cycle)) throw badRequest('Invalid billing cycle');
-    await ctx.tx((t) => t.one('SELECT public.plan_switch($1, $2, $3)', [p_store_id, code, cycle]));
-    const row = await ctx.one('SELECT public.plan_overview($1) AS v', [p_store_id]);
-    return row?.v ?? null;
+    return ctx.tx(async (t) => {
+      await t.one('SELECT public.plan_switch($1, $2, $3)', [p_store_id, code, cycle]);
+      const row = await t.one('SELECT public.plan_overview($1) AS v', [p_store_id]);
+      if (!row?.v) throw badRequest('Plan overview unavailable');
+      return row.v;
+    });
   },
   /** plan_allows(p_store_id, p_feature_key) → boolean */
   async plan_allows({ p_store_id, p_feature_key }, ctx) {

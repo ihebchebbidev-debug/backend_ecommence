@@ -3,6 +3,8 @@ import { forbidden, unauthorized, badRequest } from '../lib/errors.js';
 import coupons from './coupons.js';
 import builder from './builder.js';
 import billing from './billing.js';
+import loyaltyRpc from './loyalty.js';
+import marketingRpc from './marketing.js';
 import { validateTeamAccess } from '../lib/teamPermissions.js';
 
 // Permissions, shops and the confirmation-agent flag are re-read from the member
@@ -67,6 +69,12 @@ export const TEAM_MODULES = {
   codes_promo: { table: 'coupons', search: 'code', fields: ['code','type','value','active','min_order_amount','starts_at','expires_at','max_uses'] },
   livraison:   { table: 'delivery_shipments', search: 'tracking_number', fields: [] },
   marketing:   { table: 'campaigns', search: 'name', fields: ['name','platform','budget','start_date','end_date','status','leads','spend','roas'] },
+  // Sales pages: members rename/publish/unpublish only; page content stays on the validated owner editor.
+  pages_vente: { table: 'store_sales_pages', search: 'name', fields: ['name','headline','status'], noCreate: true },
+  upsell:      { table: 'store_upsell_offers', search: 'name', fields: ['name','active','discount_percent','priority'], noCreate: true },
+  protection:  { table: 'phone_blacklist', search: 'phone', fields: ['phone','client_name','reason'], required: 'phone' },
+  protection_ip: { table: 'ip_blacklist', search: 'ip_address', fields: ['ip_address','reason'], required: 'ip_address', permission: 'protection' },
+  finance:     { table: 'finance_fixed_items', search: 'label', fields: [], readOnly: true },
   avis:        { table: 'product_reviews', fields: ['comment','customer_name','image_url','product_id','rating','sort_order','status'], parent: { table: 'products', column: 'product_id' } },
 };
 const ACTIONS = { list: 'read', create: 'create', update: 'modify', delete: 'delete' };
@@ -90,7 +98,7 @@ async function asMember(ctx, session, fn) {
 }
 
 /** Adapter grants only the already-checked operation, never a blanket owner session. */
-function scopedContext(ctx, session) {
+function scopedContext(ctx, session, grantedKey = 'canManageCoupons') {
   return {
     ...ctx,
     userId: session.team_member_id,
@@ -100,12 +108,43 @@ function scopedContext(ctx, session) {
       if (storeId !== session.store_id) throw forbidden('Shop not assigned');
       return 'admin';
     },
-    hasStorePermission: async (storeId, key) => storeId === session.store_id && key === 'canManageCoupons',
+    hasStorePermission: async (storeId, key) => storeId === session.store_id && key === grantedKey,
     tx: fn => asMember(ctx, session, t => fn({ ...t })),
   };
 }
 
+// Member wrappers around owner RPCs: each (feature, action) maps to one existing
+// RPC and the member grant it needs; the wrapped RPC still validates its input.
+// SMTP/loyalty settings stay owner-only, so members never see or change credentials.
+export const TEAM_FEATURES = {
+  fidelite: { key: 'canManageCoupons', actions: {
+    overview: ['read', loyaltyRpc.loyalty_overview],
+    history: ['read', loyaltyRpc.loyalty_history],
+    adjust: ['modify', loyaltyRpc.loyalty_adjust],
+    redeem: ['modify', loyaltyRpc.loyalty_redeem],
+  } },
+  emails: { key: 'canManageAutomations', actions: {
+    overview: ['read', marketingRpc.email_marketing_overview],
+    send: ['modify', marketingRpc.email_campaign_send],
+    delete: ['delete', marketingRpc.email_campaign_delete],
+  } },
+};
+const FEATURE_ARGS = { fidelite: ['p_search', 'p_phone', 'p_name', 'p_points'], emails: ['p_id'] };
+
 export default {
+  /** team_feature(p_session_id, p_feature, p_action, p_args) — session-checked member access to loyalty/email campaigns. */
+  async team_feature({ p_session_id, p_feature, p_action, p_args = {} }, ctx) {
+    const feature = Object.prototype.hasOwnProperty.call(TEAM_FEATURES, p_feature) ? TEAM_FEATURES[p_feature] : null;
+    const entry = feature && Object.prototype.hasOwnProperty.call(feature.actions, p_action) ? feature.actions[p_action] : null;
+    if (!entry) throw badRequest('Unknown feature or action');
+    const session = await loadSession(ctx, p_session_id);
+    need(session, p_feature, entry[0]);
+    const args = Object.fromEntries(Object.entries(p_args || {}).filter(([k]) => FEATURE_ARGS[p_feature].includes(k)));
+    const result = await entry[1]({ ...args, p_store_id: session.store_id }, scopedContext(ctx, session, feature.key));
+    if (p_feature === 'emails' && p_action === 'overview') return { ...result, settings: null };
+    return result;
+  },
+
   async agent_logout({p_session_id}, ctx) {
     const session = await loadSession(ctx,p_session_id);
     await ctx.q('DELETE FROM public.agent_sessions WHERE id=$1',[session.id]);
@@ -324,7 +363,8 @@ export default {
 
   async team_get_members({ p_session_id }, ctx) {
     const session = await loadSession(ctx, p_session_id);
-    need(session, 'personnel');
+    // Répartition grants open the same staff list as Personnel in the member app.
+    try { need(session, 'personnel'); } catch (e) { need(session, 'repartition'); }
     const data = await ctx.q(
       `SELECT id, name, first_name, last_name, role, status, online, available
        FROM public.team_members WHERE store_id = $1 OR $1 = ANY(store_ids)`,
@@ -403,7 +443,9 @@ export default {
     const act = Object.prototype.hasOwnProperty.call(ACTIONS, p_action) ? ACTIONS[p_action] : null;
     if (!mod || !act) throw badRequest('Unknown module or action');
     const session = await loadSession(ctx, p_session_id);
-    need(session, p_module, act);
+    need(session, mod.permission || p_module, act);
+    if (p_action !== 'list' && mod.readOnly) throw forbidden('Read-only module for team members');
+    if (p_action === 'create' && mod.noCreate) throw forbidden('Create this item from the shop owner editor');
 
     if (['clients','livraison'].includes(p_module)) {
       const sub = await ctx.one('SELECT customer_data_locked FROM public.store_subscriptions WHERE store_id=$1 ORDER BY created_at DESC LIMIT 1', [session.store_id]);
@@ -442,12 +484,14 @@ export default {
       return coupons.save_store_coupon({ p_store_id: session.store_id, p_coupon_id: p_action === 'update' ? p_id : null, p_coupon: p_values }, adapter);
     }
     const values = Object.fromEntries(Object.entries(p_values || {}).filter(([k]) => cols.has(k) && mod.fields.includes(k)));
-    for (const key of ['price','cost','stock','delivery_cost','delivery_fee','budget','leads','spend','roas']) {
+    for (const key of ['discount_percent','priority','price','cost','stock','delivery_cost','delivery_fee','budget','leads','spend','roas']) {
       if (values[key] != null && (!Number.isFinite(Number(values[key])) || Number(values[key]) < 0)) throw badRequest('Invalid numeric value');
     }
     if (values.stock != null && !Number.isInteger(Number(values.stock))) throw badRequest('Stock must be an integer');
     if (values.rating != null && (!Number.isInteger(Number(values.rating)) || Number(values.rating) < 1 || Number(values.rating) > 5)) throw badRequest('Rating must be between 1 and 5');
-    if (p_action === 'create' && !mod.parent && !String(values.name || '').trim()) throw badRequest('Name required');
+    if (p_action === 'create' && !mod.parent && !String(values[mod.required || 'name'] || '').trim()) throw badRequest('Name required');
+    if (values.discount_percent != null && Number(values.discount_percent) > 100) throw badRequest('Invalid discount');
+    if (values.status != null && p_module === 'pages_vente' && !['draft','active'].includes(String(values.status))) throw badRequest('Invalid status');
     if (p_module === 'categories' && p_action === 'create' && !String(values.slug || '').trim()) throw badRequest('Slug required');
 
     return asMember(ctx, session, async (t) => {

@@ -52,6 +52,8 @@ export default async function phoneOtp(req, res, ctx) {
   const action = String(body.action ?? '');
 
   if (action === 'send') {
+    // An admin who switched phone verification off stops every new code.
+    if (pvs && pvs.enabled === false) return json(res, { error: 'Phone verification is disabled', disabled: true }, 403);
     const rawPhone = String(body.phone ?? '');
     const channel = body.channel === 'sms' ? 'sms' : 'whatsapp';
     if (!rawPhone) return json(res, { error: 'Téléphone requis' }, 400);

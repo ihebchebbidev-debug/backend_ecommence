@@ -2,6 +2,7 @@
 // (Konnect / Flouci / Paymee verification inlined.)
 import crypto from 'node:crypto';
 import { json } from './_shared/respond.js';
+import { readPlatformKonnect } from './_shared/platformGateway.js';
 
 function log(event, data) {
   const safe = { event, timestamp: new Date().toISOString() };
@@ -27,9 +28,10 @@ function fail(reason, providerStatus) {
 }
 
 // ── Konnect ──────────────────────────────────────────────────────────────
-async function verifyKonnect(payment, payload, headers) {
-  const apiKey = process.env.KONNECT_API_KEY;
-  const baseUrl = process.env.KONNECT_BASE_URL || 'https://api.konnect.network';
+async function verifyKonnect(payment, payload, headers, ctx) {
+  // Same key and test/live mode as the one used to create the payment.
+  const gw = await readPlatformKonnect(ctx);
+  const apiKey = gw.apiKey;
 
   const paymentRef = payload.payment_ref || payload.paymentRef || payload.id || payment.provider_payment_id;
   if (!paymentRef) return fail('missing_payment_reference', 'no_reference');
@@ -46,7 +48,7 @@ async function verifyKonnect(payment, payload, headers) {
   if (!apiKey) return fail('konnect_api_key_missing', 'demo');
 
   try {
-    const r = await fetch(`${baseUrl}/api/v2/payments/${paymentRef}`, {
+    const r = await fetch(`${gw.base}/payments/${encodeURIComponent(paymentRef)}`, {
       method: 'GET',
       headers: { 'x-api-key': apiKey, 'Content-Type': 'application/json' },
     });
@@ -96,7 +98,7 @@ async function verifyFlouci(payment, payload, headers) {
     const data = await r.json();
     const success = data.success === true;
     const status = String(data.result?.status || '').toLowerCase();
-    const isPaid = success && status === 'success';
+    const isPaid = success && status === 'success'; // both Flouci signals must agree
     const amountMillimes = Number(data.result?.amount || 0);
     const providerAmountTnd = amountMillimes / 1000;
     const providerCurrency = 'TND';
@@ -133,12 +135,12 @@ function verifyPaymee(payment, payload) {
   return { verified: true, providerStatus: 'paid', providerAmountTnd, providerCurrency, providerReference };
 }
 
-async function verifyPaymentWithProvider(provider, payment, payload, headers) {
+async function verifyPaymentWithProvider(provider, payment, payload, headers, ctx) {
   const prov = (provider || '').toLowerCase();
   switch (prov) {
     case 'konnect':
     case 'bank_card':
-      return verifyKonnect(payment, payload, headers);
+      return verifyKonnect(payment, payload, headers, ctx);
     case 'flouci':
       return verifyFlouci(payment, payload, headers);
     case 'paymee':
@@ -329,7 +331,7 @@ export default async function paymentCallback(req, res, ctx) {
 
     log('payment_callback_verification_started', { payment_id: payment.id, provider: payment.provider });
 
-    const verifyResult = await verifyPaymentWithProvider(payment.provider, payment, body, req.headers);
+    const verifyResult = await verifyPaymentWithProvider(payment.provider, payment, body, req.headers, ctx);
 
     if (!verifyResult.verified) {
       log('payment_callback_rejected', { payment_id: payment.id, reason: verifyResult.reason, provider_status: verifyResult.providerStatus });
@@ -362,29 +364,35 @@ export default async function paymentCallback(req, res, ctx) {
       return json(res, { error: 'Reference mismatch' }, 400);
     }
 
+    // Claim + settle in one transaction: only the first callback can move the
+    // payment to paid, and a failed settlement rolls the claim back so a
+    // provider retry can complete it.
     const nowIso = new Date().toISOString();
+    let outcome;
     try {
-      await ctx.q('UPDATE public.payments SET status=$1, paid_at=$2, updated_at=$2 WHERE id=$3', ['paid', nowIso, payment.id]);
-    } catch {
-      log('payment_callback_processing_error', { payment_id: payment.id, error: 'failed_to_mark_paid' });
-      return json(res, { error: 'Failed to mark payment as paid' }, 500);
-    }
-
-    try {
-      if (payment.purpose === 'wallet_topup') {
-        await processWalletTopup(ctx, payment);
-      } else if (payment.purpose === 'subscription_payment') {
-        await processSubscriptionPayment(ctx, payment);
-      }
-
-      await ctx.q('UPDATE public.store_subscriptions SET customer_data_locked=false, customer_data_locked_at=now() WHERE store_id=$1', [payment.store_id]);
-
-      log('payment_callback_processed_success', { payment_id: payment.id, purpose: payment.purpose });
-      return json(res, { message: 'Payment processed successfully' }, 200);
+      outcome = await ctx.tx(async (db) => {
+        const claimed = await db.q(
+          `UPDATE public.payments SET status='paid', paid_at=$1, updated_at=$1
+            WHERE id=$2 AND status NOT IN ('paid','failed','cancelled') RETURNING id`,
+          [nowIso, payment.id],
+        );
+        if (!claimed.length) return 'already';
+        const tctx = { ...ctx, q: db.q };
+        if (payment.purpose === 'wallet_topup') await processWalletTopup(tctx, payment);
+        else if (payment.purpose === 'subscription_payment') await processSubscriptionPayment(tctx, payment);
+        await db.q('UPDATE public.store_subscriptions SET customer_data_locked=false, customer_data_locked_at=now() WHERE store_id=$1', [payment.store_id]);
+        return 'processed';
+      });
     } catch (procErr) {
       log('payment_callback_processing_error', { payment_id: payment.id, error: procErr.message });
-      return json(res, { error: 'Payment processed but post-processing failed' }, 500);
+      return json(res, { error: 'Payment settlement failed' }, 500);
     }
+    if (outcome === 'already') {
+      log('payment_callback_already_paid', { payment_id: payment.id });
+      return json(res, { message: 'Payment already processed' }, 200);
+    }
+    log('payment_callback_processed_success', { payment_id: payment.id, purpose: payment.purpose });
+    return json(res, { message: 'Payment processed successfully' }, 200);
   } catch (err) {
     log('payment_callback_processing_error', { error: err.message });
     return json(res, { error: err.message }, 500);

@@ -98,6 +98,21 @@ async function scopeFilter(ctx, table, policy, op, query) {
       if (op !== 'read') {
         if (policy.writeRoles && policy.writeRoles.length === 0) throw forbidden('read-only table');
         if (requested && policy.writeRoles) await ctx.assertStoreAccess(requested, policy.writeRoles);
+        if (requested && policy.writePermission) await ctx.assertStorePermission(requested, policy.writePermission);
+        // Without an explicit shop filter, only shops where the caller holds a
+        // write role are reachable — otherwise an id-only PATCH/DELETE would
+        // bypass the role restriction.
+        if (!requested && (policy.writeRoles || policy.writePermission) && !ctx.isServiceRole && !(await ctx.isSuperAdmin())) {
+          const allowed = [];
+          for (const id of ids) {
+            if (policy.writeRoles && !policy.writeRoles.includes(await ctx.storeRole(id))) continue;
+            if (policy.writePermission && !(await ctx.hasStorePermission(id, policy.writePermission))) continue;
+            allowed.push(id);
+          }
+          return col
+            ? { where: [`"${col}" = ANY($1::uuid[])`], params: [allowed] }
+            : { where: [`"${policy.parent.column}" IN (SELECT id FROM public.${policy.parent.table} WHERE store_id = ANY($1::uuid[]))`], params: [allowed] };
+        }
       }
       if (!col) {
         // Child table (product_bundles / product_options / product_reviews).
@@ -302,13 +317,18 @@ restRouter.get(
     }
 
     const selectCols = columns === '*' ? '*' : `${columns}, "id"`;
-    let sql = `SELECT ${embeds.length ? selectCols : columns} FROM public.${ident(table)}${built.where}${built.orderBy}`;
+    // Masked tables always fetch the row id so the unpaid-commission mask can
+    // apply; it is dropped again below when the caller did not ask for it.
+    const masked = !!(policy.planMask || policy.planMaskClients);
+    const addedId = columns !== '*' && (embeds.length || masked) && !/(^|[\s,"])id("|\s*(,|$))/.test(columns);
+    let sql = `SELECT ${embeds.length || masked ? selectCols : columns} FROM public.${ident(table)}${built.where}${built.orderBy}`;
     if (limit !== null) { params.push(limit); sql += ` LIMIT $${params.length}`; }
     if (offset) { params.push(offset); sql += ` OFFSET $${params.length}`; }
 
     let rows = await withSelfHeal(table, null, () => ctx.q(sql, params));
     if (embeds.length) rows = await loadEmbeds(ctx, rows, embeds, table);
     rows = await stripHidden(rows, policy, ctx);
+    if (addedId && masked && !embeds.length) rows = rows.map(({ id: _id, ...rest }) => rest);
 
     return respond(req, res, rows, { total, offset });
   }),
@@ -482,6 +502,7 @@ async function authorizeWrite(ctx, table, policy, row, op, query = {}) {
   if (ctx.isServiceRole) return;
   if (policy.scope === 'denied') throw forbidden(`table "${table}" is not writable over the data API`);
   if (await ctx.isSuperAdmin()) return;
+  if (op !== 'insert' && policy.ownerColumn && row && Object.prototype.hasOwnProperty.call(row, policy.ownerColumn)) throw forbidden('shop ownership cannot be changed here');
 
   if (policy.scope === 'store') {
     const col = policy.storeColumn;
@@ -506,6 +527,7 @@ async function authorizeWrite(ctx, table, policy, row, op, query = {}) {
     if (storeId) {
       if (!ctx.userId && policy.publicInsert) return;
       await ctx.assertStoreAccess(storeId, policy.writeRoles || null);
+      await ctx.assertStorePermission(storeId, policy.writePermission);
     }
     return;
   }

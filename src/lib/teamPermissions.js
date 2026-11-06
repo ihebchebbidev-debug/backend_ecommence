@@ -1,7 +1,7 @@
 import { badRequest } from './errors.js';
 
 export const TEAM_ROLES = ['agent','confirmation','stock','designer','tech','manager','admin','orders','custom','readonly'];
-export const TEAM_PERMISSION_KEYS = ['commandes','produits','categories','personnel','boutique','statistiques','calculateur','gestionnaire','paiement','credits_ia','codes_promo','clients','livraison','avis','marketing','integrations','repartition','regles_repartition'];
+export const TEAM_PERMISSION_KEYS = ['commandes','produits','categories','personnel','boutique','statistiques','calculateur','gestionnaire','paiement','credits_ia','codes_promo','clients','livraison','avis','marketing','integrations','repartition','regles_repartition','pages_vente','upsell','protection','finance','fidelite','emails'];
 export function validateTeamAccess(role, permissions) {
   if (!TEAM_ROLES.includes(role)) throw badRequest('Invalid team role');
   if (!permissions || typeof permissions !== 'object' || Array.isArray(permissions)) throw badRequest('Invalid permissions');

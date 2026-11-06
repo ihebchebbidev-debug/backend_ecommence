@@ -12,6 +12,8 @@
 //
 // publicRead: storefront tables an anonymous visitor may read when filtered by
 // store_id (matching the live "public storefront" policies).
+// writePermission: role permission (store_role_permissions key) every REST write
+// also requires, so switching a feature off for a role closes generic writes.
 // hidden: columns stripped from every REST response (credential material).
 
 const store = (extra = {}) => ({ scope: 'store', storeColumn: 'store_id', ...extra });
@@ -27,11 +29,11 @@ export const policies = {
   store_plan_state: denied(),
   store_plan_usage: denied(),
   store_plan_events: denied(),
-  campaigns: store(),
+  campaigns: store({ writePermission: 'canManageAutomations' }),
   carriers: store({ publicRead: true }),
-  categories: store({ publicRead: true }),
-  checkout_settings: store({ publicRead: true }),
-  clients: store({ writeRoles: ['owner', 'admin', 'manager'], planMaskClients: ['name', 'phone', 'phone2', 'email', 'address', 'city', 'notes'] }),
+  categories: store({ publicRead: true, writePermission: 'canManageProducts' }),
+  checkout_settings: store({ publicRead: true, writePermission: 'canManageSettings' }),
+  clients: store({ writeRoles: ['owner', 'admin', 'manager'], writePermission: 'canManageCustomers', planMaskClients: ['name', 'phone', 'phone2', 'email', 'address', 'city', 'notes'] }),
   // Writes/reads go through permission-checked coupon RPCs; no public enumeration.
   coupons: store({ writeRoles: [] }),
   commerce_notifications: denied(),
@@ -41,49 +43,50 @@ export const policies = {
   store_loyalty_accounts: denied(),
   store_loyalty_ledger: denied(),
   commerce_attempts: denied(),
-  crm_calls: store(),
+  crm_calls: store({ writePermission: 'canManageCustomers' }),
   delivery_integration_secrets: denied(),
-  delivery_shipments: store({ writeRoles: ['owner', 'admin', 'manager'] }),
-  delivery_tracking_events: store({ writeRoles: ['owner', 'admin', 'manager'] }),
-  finance_fixed_items: store(),
-  invoices: store(),
+  delivery_shipments: store({ writeRoles: ['owner', 'admin', 'manager'], writePermission: 'canManageOrders' }),
+  delivery_tracking_events: store({ writeRoles: ['owner', 'admin', 'manager'], writePermission: 'canManageOrders' }),
+  finance_fixed_items: store({ writePermission: 'canViewAnalytics' }),
+  invoices: store({ writePermission: 'canManagePayments' }),
   // Per-shop fraud lists; rows without store_id are legacy platform entries (admin only).
-  ip_blacklist: store(),
-  phone_blacklist: store(),
-  orders: store({ planMask: ['client_name', 'client_phone', 'client_phone2', 'address', 'notes', 'confirmation_notes'] }), // Public checkout must use validated create_public_order.
-  products: store({ publicRead: true }),
-  product_bundles: store({ storeColumn: null, parent: { table: 'products', column: 'product_id' }, publicRead: true }),
-  product_options: store({ storeColumn: null, parent: { table: 'products', column: 'product_id' }, publicRead: true }),
-  product_reviews: store({ storeColumn: null, parent: { table: 'products', column: 'product_id' }, publicRead: true, publicInsert: true }),
-  shipments: store(),
-  store_banners: store({ publicRead: true }),
-  store_custom_fields: store({ publicRead: true }),
+  ip_blacklist: store({ writePermission: 'canManageSettings' }),
+  phone_blacklist: store({ writePermission: 'canManageSettings' }),
+  orders: store({ writeRoles: ['owner', 'admin', 'manager', 'seller', 'support'], writePermission: 'canManageOrders', planMask: ['client_name', 'client_phone', 'client_phone2', 'address', 'notes', 'confirmation_notes'] }), // Public checkout must use validated create_public_order.
+  products: store({ publicRead: true, writeRoles: ['owner', 'admin', 'manager', 'seller'], writePermission: 'canManageProducts' }),
+  product_bundles: store({ storeColumn: null, parent: { table: 'products', column: 'product_id' }, publicRead: true, writePermission: 'canManageProducts' }),
+  product_options: store({ storeColumn: null, parent: { table: 'products', column: 'product_id' }, publicRead: true, writePermission: 'canManageProducts' }),
+  product_reviews: store({ storeColumn: null, parent: { table: 'products', column: 'product_id' }, publicRead: true, publicInsert: true, writePermission: 'canManageProducts' }),
+  shipments: store({ writePermission: 'canManageOrders' }),
+  store_banners: store({ publicRead: true, writePermission: 'canManageSettings' }),
+  store_custom_fields: store({ publicRead: true, writePermission: 'canManageSettings' }),
   store_custom_limits: admin(),
-  store_delivery_integrations: store({ writeRoles: ['owner', 'admin'], hidden: ['credentials_encrypted', 'credentials_iv', 'credentials_version'] }),
-  store_delivery_settings: store({ writeRoles: ['owner', 'admin'] }),
+  store_delivery_integrations: store({ writeRoles: ['owner', 'admin'], writePermission: 'canManageSettings', hidden: ['credentials_encrypted', 'credentials_iv', 'credentials_version'] }),
+  store_delivery_settings: store({ writeRoles: ['owner', 'admin'], writePermission: 'canManageSettings' }),
   // Store members may read their own store's overrides (live "overrides_select_own_store"); only super admins write.
   store_feature_overrides: store({ writeRoles: [] }),
   store_form_submissions: denied(), // Read only through the staff-checked RPC; submissions only through published forms.
   store_domain_requests: denied(), // Domain ownership and activation only through protected RPCs.
-  store_members: store({ writeRoles: ['owner', 'admin'] }),
+  store_members: store({ writeRoles: ['owner'] }), // Only the owner may grant roles, so admins cannot self-promote.
   store_onboarding_answers: store(),
   store_order_seq: denied(),
-  store_pages: store({ publicRead: true }),
+  store_pages: store({ publicRead: true, writePermission: 'canManageSettings' }),
   store_payment_integrations: store({
     writeRoles: ['owner', 'admin'],
+    writePermission: 'canManagePayments',
     hidden: ['credentials_encrypted', 'credentials_iv', 'credentials_version'],
   }),
-  store_role_permissions: store({ writeRoles: ['owner', 'admin'] }),
-  store_sales_pages: store({ publicRead: true }),
-  store_settings: store({ publicRead: true }),
+  store_role_permissions: store({ writeRoles: ['owner'] }),
+  store_sales_pages: store({ publicRead: true, writePermission: 'canManageProducts' }),
+  store_settings: store({ publicRead: true, writePermission: 'canManageSettings' }),
   store_subscriptions: store({ writeRoles: ['owner'] }),
-  store_theme: store({ publicRead: true }),
-  store_theme_instances: store({ publicRead: true }),
-  store_upsell_offers: store({ publicRead: true }),
+  store_theme: store({ publicRead: true, writePermission: 'canManageSettings' }),
+  store_theme_instances: store({ publicRead: true, writePermission: 'canManageSettings' }),
+  store_upsell_offers: store({ publicRead: true, writePermission: 'canManageProducts' }),
   store_usage: store({ writeRoles: [] }),
   store_wallets: store({ writeRoles: [] }),
-  team_members: store({ writeRoles: ['owner', 'admin'], hidden: ['password_hash'] }),
-  transactions: store(),
+  team_members: store({ writeRoles: ['owner', 'admin'], writePermission: 'canManageTeam', hidden: ['password_hash'] }),
+  transactions: store({ writePermission: 'canManagePayments' }),
   wallet_transactions: store({ writeRoles: [] }),
 
   // ── store registry ─────────────────────────────────────────────────

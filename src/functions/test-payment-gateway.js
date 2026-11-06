@@ -1,5 +1,6 @@
 // Port of supabase/functions/test-payment-gateway/index.ts
 import { json } from './_shared/respond.js';
+import { readPlatformKonnect } from './_shared/platformGateway.js';
 
 const SETTINGS_ID = '00000000-0000-0000-0000-000000000002';
 
@@ -32,13 +33,16 @@ export default async function testPaymentGateway(req, res, ctx) {
         message = 'Clé API Konnect manquante';
       } else {
         try {
-          const r = await fetch('https://api.konnect.network/api/v2/wallets', {
+          const gw = await readPlatformKonnect(ctx);
+          if (!walletId) throw new Error('wallet_id non défini');
+          const r = await fetch(`${gw.base}/wallets/${encodeURIComponent(walletId)}`, {
             method: 'GET',
             headers: { 'x-api-key': apiKey },
+            signal: AbortSignal.timeout(15000),
           });
           ok = r.ok;
           if (r.ok) {
-            message = walletId ? 'Connexion Konnect réussie' : 'Connexion OK (wallet_id non défini)';
+            message = `Connexion Konnect réussie (${gw.mode})`;
           } else {
             const txt = await r.text().catch(() => '');
             message = `Konnect HTTP ${r.status}${txt ? `: ${txt.slice(0, 120)}` : ''}`;
@@ -53,7 +57,7 @@ export default async function testPaymentGateway(req, res, ctx) {
       } else {
         // Real call to Paymee: a rejected token answers 401/403, a valid token
         // answers 200/422 (payload validation) on the same endpoint.
-        const host = settings?.environment === 'production' ? 'app.paymee.tn' : 'sandbox.paymee.tn';
+        const host = (await readPlatformKonnect(ctx)).mode === 'live' ? 'app.paymee.tn' : 'sandbox.paymee.tn';
         try {
           const r = await fetch(`https://${host}/api/v2/payments/create`, {
             method: 'POST',
@@ -73,8 +77,9 @@ export default async function testPaymentGateway(req, res, ctx) {
         }
       }
     } else {
-      ok = !!apiKey;
-      message = ok ? 'Clé personnalisée présente' : 'Clé API manquante';
+      // A key we cannot check with the provider is never reported as connected.
+      ok = false;
+      message = apiKey ? 'Fournisseur non vérifiable : connexion non confirmée' : 'Clé API manquante';
     }
 
     const status = ok ? 'connected' : 'error';

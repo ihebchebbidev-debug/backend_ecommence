@@ -301,6 +301,10 @@ export async function assertAccountAndStore(ctx, res, storeId, allowedRoles = ['
       [storeId, ctx.userId, allowedRoles],
     ).then((r) => r[0]);
     if (!member) { res.status(403).json({ error: 'Accès refusé au magasin' }); return false; }
+    // A role whose order permission is switched off cannot dispatch, cancel or track shipments.
+    if (typeof ctx.hasStorePermission === 'function' && !(await ctx.hasStorePermission(storeId, 'canManageOrders'))) {
+      res.status(403).json({ error: 'Permission insuffisante' }); return false;
+    }
   }
   return true;
 }

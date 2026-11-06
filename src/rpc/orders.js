@@ -3,7 +3,7 @@ import { ALL_PLANS_UNLOCKED } from './billing.js';
 import { parseLimits, limitViolation, LIMIT_KEYS } from '../lib/protection.js';
 import { createHash } from 'node:crypto';
 import { badRequest, forbidden } from '../lib/errors.js';
-import { id, text, couponCode, priceCheckout, major } from '../lib/commerce.js';
+import { id, text, couponCode, priceCheckout, major, permission } from '../lib/commerce.js';
 import { cleanCheckoutAnswers, answersAsNotes } from '../lib/checkoutExtras.js';
 import { checkoutConsent, recordCheckoutConsent } from '../lib/metaCheckoutConsent.js';
 import { captureAbandoned } from '../lib/abandonedCheckout.js';
@@ -286,6 +286,35 @@ export default {
     return [{ ...projectSecureRow(row, canView), items }];
   },
 
+  /** Seller web form: atomically replaces an order's display lines (main + extras). order_items has no REST access. */
+  async set_order_lines_manual({ p_order_id, p_lines }, ctx) {
+    const orderId = id(p_order_id);
+    if (!Array.isArray(p_lines) || !p_lines.length || p_lines.length > 50) throw badRequest('Invalid items');
+    const lines = p_lines.map((l) => {
+      const qty = Number(l?.quantity);
+      const unit = Number(l?.unit_price);
+      const total = Number(l?.line_total);
+      if (!Number.isInteger(qty) || qty < 1 || qty > 100000) throw badRequest('Invalid quantity');
+      if (!Number.isFinite(unit) || unit < 0 || !Number.isFinite(total) || total < 0) throw badRequest('Invalid price');
+      const name = text(l?.product_name ?? '', 300);
+      if (!name) throw badRequest('Product name required');
+      return { name, qty, unit, total, productId: l?.product_id ? id(l.product_id) : null };
+    });
+    const order = await ctx.one('SELECT store_id FROM public.orders WHERE id = $1 AND deleted_at IS NULL', [orderId]);
+    if (!order) throw badRequest('Order not found');
+    await permission(ctx, order.store_id, 'canManageOrders');
+    return ctx.tx(async (t) => {
+      await t.q('SELECT id FROM public.orders WHERE id = $1 FOR UPDATE', [orderId]);
+      await t.q('DELETE FROM public.order_items WHERE order_id = $1', [orderId]);
+      for (const l of lines) {
+        await t.q(`INSERT INTO public.order_items (order_id, product_id, product_name, quantity, unit_price, line_total)
+          SELECT $1, (SELECT p.id FROM public.products p WHERE p.id = $2 AND p.store_id = $6), $3, $4, $5, $7`,
+          [orderId, l.productId, l.name, l.qty, l.unit, order.store_id, l.total]);
+      }
+      return { ok: true, count: lines.length };
+    });
+  },
+
   async get_order_items({ p_order_id }, ctx) {
     const order = await ctx.one('SELECT store_id FROM public.orders WHERE id = $1', [p_order_id]);
     if (!order) return [];
@@ -492,7 +521,7 @@ export default {
   async soft_delete_store_order({ p_order_id }, ctx) {
     const order = await ctx.one('SELECT store_id FROM public.orders WHERE id = $1', [p_order_id]);
     if (!order) return false;
-    await ctx.assertStoreAccess(order.store_id);
+    await permission(ctx, order.store_id, 'canManageOrders');
     const res = await ctx.one(
       `UPDATE public.orders SET deleted_at = now() WHERE id = $1 RETURNING id`,
       [p_order_id],
@@ -503,7 +532,7 @@ export default {
   async restore_store_order({ p_order_id }, ctx) {
     const order = await ctx.one('SELECT store_id FROM public.orders WHERE id = $1', [p_order_id]);
     if (!order) return false;
-    await ctx.assertStoreAccess(order.store_id);
+    await permission(ctx, order.store_id, 'canManageOrders');
     const res = await ctx.one(
       `UPDATE public.orders SET deleted_at = NULL WHERE id = $1 RETURNING id`,
       [p_order_id],

@@ -25,7 +25,8 @@ export function checkCertificate(host, ip, timeout = 5000) {
 
 export function healthChecks(domain, dns, https, linked) {
   const ips = dns.expected.join(', ');
-  return [
+  const subdomain = dns.apex === false; // shop.example.com: no www checks apply
+  return withoutWww(subdomain, [
     { key: 'root', label: 'Root DNS', ready: dns.root,
       message: dns.root ? 'Your domain points only to the shop server.' : `Your domain points to ${dns.found.root.join(', ') || 'no address'} instead of the shop server.`,
       fix: dns.root ? null : `Set the @ A record to ${ips}. Remove conflicting A and AAAA records for @. Keep all email records.` },
@@ -42,5 +43,6 @@ export function healthChecks(domain, dns, https, linked) {
       ready: https[key].ready,
       message: https[key].ready ? `A trusted HTTPS certificate is ready${https[key].expires_at ? ` until ${https[key].expires_at.slice(0, 10)}` : ''}.` : https[key].reason === 'dns_not_ready' ? 'HTTPS has not been checked because DNS or ownership is not ready.' : 'A trusted HTTPS connection could not be confirmed yet.',
       fix: https[key].ready ? null : !dns.ok ? 'Fix the DNS and TXT checks first, then check again.' : 'Wait a few minutes, then check again. If it still fails, ask platform support to check certificate issuance, ports 80/443 and your CAA records.' })),
-  ];
+  ]);
 }
+const withoutWww = (subdomain, checks) => (subdomain ? checks.filter((c) => c.key !== 'www' && c.key !== 'https_www') : checks);

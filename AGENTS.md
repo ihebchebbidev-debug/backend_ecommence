@@ -1,4 +1,5 @@
 # Backend rules
+- Plan switches and overview readback run in one transaction without provider collection; repeated identical scheduled downgrades are no-ops, so retries cannot create misleading activation results or duplicate events.
 - Team management uses authenticated owner/admin RPCs plus canManageTeam, allowlisted web roles/module actions and atomic session revocation; removed access keeps the member row for audit history, never grants platform roles or writes profiles.
 - Mobile reference lookup shares live team-session validation and seller commerce permissions, matches exact shop-scoped identifiers and returns an allowlisted masked projection; it never prepares, pays or dispatches an order.
 - Merchant payments share version-aware paymentCrypto across save, probe, checkout and callbacks.
@@ -9,3 +10,7 @@
 - Account deletion goes only through `account_delete` (rpc/account.js): password re-check, then one transaction closes owned shops, removes memberships, anonymizes login/profile and revokes sessions; platform billing records are retained for legal reasons.
 - Payment callbacks settle only the order found by its saved payment reference, require provider order binding and matching currency/amount (shared minor-unit helper), and record a payment_mismatch seller notification instead of failing silently.
 - Plan billing: commission adjustments and plan changes by admins go through super-admin RPCs in rpc/billing.js and are written to store_plan_events and admin_audit_logs, so every billing change is traceable. Exchange rates come from lib/exchangeRates.js (source='auto'); an active source='manual' row always wins.
+- Storage reads honour bucket privacy: public URLs serve only public buckets; private objects and listings need the service role, a platform admin or the owner's `<user-id>/` prefix, so file paths alone never expose private uploads.
+- REST writes without an explicit shop filter are limited to shops where the caller holds the table's write roles, and masked tables always fetch row ids, so id-only writes or narrow column selections cannot bypass role or commission rules.
+- REST store policies declare a writePermission (store_role_permissions key) checked on every generic write, with unset keys falling back to lib/rolePermissionDefaults.js (mirror of web DEFAULT_ROLE_PERMISSIONS), so switching a feature off for a role closes indirect write routes.
+- Order regression coverage lives in tests/orderFixes.e2e.mjs (`DATABASE_URL=<disposable db> npm run test:orders`): it boots the real server and stubs only payment providers, so order edit/delete/restore, earlier payment links and shop-currency rules fail loudly if broken.

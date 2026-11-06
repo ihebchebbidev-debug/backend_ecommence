@@ -74,10 +74,12 @@ export default async function createStorePayment(req, res, ctx) {
   try { creds = decryptPaymentJson(integration.credentials_encrypted, integration.credentials_iv, integration.credentials_version); }
   catch { return json(res, { error: 'Erreur de déchiffrement des identifiants' }, 500); }
 
-  await ctx.q(
-    'UPDATE public.orders SET payment_status=$1, payment_provider=$2, updated_at=now() WHERE id=$3',
+  const claimed = await ctx.q(
+    `UPDATE public.orders SET payment_status=$1, payment_provider=$2, updated_at=now()
+      WHERE id=$3 AND payment_status IS DISTINCT FROM 'paid' RETURNING id`,
     ['pending', integration.provider, order_id],
   );
+  if (!claimed.length) return json(res, { error: 'Commande déjà payée' }, 409);
 
   const description = `Commande ${order.order_number}`;
 
@@ -120,7 +122,7 @@ export default async function createStorePayment(req, res, ctx) {
     const paymentRef = data.paymentRef || null;
     if (!data.payUrl || !paymentRef) return json(res, { error: 'Konnect n’a pas renvoyé de lien de paiement' }, 502);
     if (paymentRef) {
-      await ctx.q('UPDATE public.orders SET payment_ref=$1, updated_at=now() WHERE id=$2', [String(paymentRef), order_id]);
+      await ctx.q("UPDATE public.orders SET payment_ref=$1, updated_at=now() WHERE id=$2 AND payment_status IS DISTINCT FROM 'paid'", [String(paymentRef), order_id]);
     }
     return json(res, { paymentUrl: data.payUrl, reference: paymentRef, provider: 'konnect' });
   }
@@ -133,7 +135,7 @@ export default async function createStorePayment(req, res, ctx) {
       method: 'POST',
       headers: { Authorization: `Token ${apiKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        amount: amountTnd.toFixed(3),
+        amount: Math.round(amountTnd * 1000) / 1000, // Paymee expects a JSON number
         note: description,
         first_name: (order.client_name || '').split(' ')[0] || '',
         last_name: (order.client_name || '').split(' ').slice(1).join(' ') || '',
@@ -160,7 +162,7 @@ export default async function createStorePayment(req, res, ctx) {
       return json(res, { error: `Paymee: ${data?.message || 'lien de paiement non renvoyé'}` }, 502);
     }
     if (paymentRef) {
-      await ctx.q('UPDATE public.orders SET payment_ref=$1, updated_at=now() WHERE id=$2', [String(paymentRef), order_id]);
+      await ctx.q("UPDATE public.orders SET payment_ref=$1, updated_at=now() WHERE id=$2 AND payment_status IS DISTINCT FROM 'paid'", [String(paymentRef), order_id]);
     }
     return json(res, { paymentUrl, reference: paymentRef, provider: 'paymee' });
   }
@@ -189,7 +191,7 @@ export default async function createStorePayment(req, res, ctx) {
     if (!r.ok || !paymentId || !link) {
       return json(res, { error: `Flouci HTTP ${r.status}${data?.message ? `: ${String(data.message).slice(0, 160)}` : ''}` }, 502);
     }
-    await ctx.q('UPDATE public.orders SET payment_ref=$1, updated_at=now() WHERE id=$2', [String(paymentId), order_id]);
+    await ctx.q("UPDATE public.orders SET payment_ref=$1, updated_at=now() WHERE id=$2 AND payment_status IS DISTINCT FROM 'paid'", [String(paymentId), order_id]);
     return json(res, { paymentUrl: link, reference: paymentId, provider: 'flouci' });
   }
 
@@ -218,7 +220,7 @@ export default async function createStorePayment(req, res, ctx) {
     if (!r.ok || !data.id || !data.url) {
       return json(res, { error: `Stripe HTTP ${r.status}${data?.error?.message ? `: ${data.error.message}` : ''}` }, 502);
     }
-    await ctx.q('UPDATE public.orders SET payment_ref=$1, updated_at=now() WHERE id=$2', [String(data.id), order_id]);
+    await ctx.q("UPDATE public.orders SET payment_ref=$1, updated_at=now() WHERE id=$2 AND payment_status IS DISTINCT FROM 'paid'", [String(data.id), order_id]);
     return json(res, { paymentUrl: data.url, reference: data.id, provider: 'stripe' });
   }
 
@@ -237,7 +239,7 @@ export default async function createStorePayment(req, res, ctx) {
     if (!ok || !data.orderId || !data.formUrl) {
       return json(res, { error: `ClicToPay${data?.errorMessage ? `: ${data.errorMessage}` : ` HTTP ${status}`}` }, 502);
     }
-    await ctx.q('UPDATE public.orders SET payment_ref=$1, updated_at=now() WHERE id=$2', [String(data.orderId), order_id]);
+    await ctx.q("UPDATE public.orders SET payment_ref=$1, updated_at=now() WHERE id=$2 AND payment_status IS DISTINCT FROM 'paid'", [String(data.orderId), order_id]);
     return json(res, { paymentUrl: data.formUrl, reference: data.orderId, provider: 'clictopay' });
   }
 

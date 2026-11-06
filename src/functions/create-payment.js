@@ -1,7 +1,7 @@
 // Port of supabase/functions/create-payment/index.ts
 import { json } from './_shared/respond.js';
+import { readPlatformKonnect, PLATFORM_SUPPORTED_PROVIDERS } from './_shared/platformGateway.js';
 
-const SETTINGS_ID = '00000000-0000-0000-0000-000000000002';
 
 export default async function createPayment(req, res, ctx) {
   try {
@@ -17,7 +17,9 @@ export default async function createPayment(req, res, ctx) {
 
     const body = req.body || {};
     const { store_id, purpose, successUrl, failUrl } = body;
-    const provider = body.provider || 'konnect';
+    const provider = String(body.provider || 'konnect').toLowerCase();
+    // This page can only take Konnect payments; refuse anything else instead of mislabelling it.
+    if (!PLATFORM_SUPPORTED_PROVIDERS.includes(provider)) return json(res, { error: `Unsupported payment method: ${provider}` }, 400);
 
     if (!store_id) return json(res, { error: 'store_id is required' }, 400);
 
@@ -111,18 +113,14 @@ export default async function createPayment(req, res, ctx) {
 
     if (!payment) return json(res, { error: 'Failed to create payment record' }, 500);
 
-    const gwSettings = await ctx.q(
-      'SELECT provider, api_key, wallet_id, environment FROM public.payment_gateway_settings WHERE id=$1',
-      [SETTINGS_ID],
-    ).then((r) => r[0]);
-
-    const konnectApiKey = gwSettings?.api_key || process.env.KONNECT_API_KEY;
-    const konnectWalletId = gwSettings?.wallet_id || process.env.KONNECT_WALLET_ID || '';
+    const gw = await readPlatformKonnect(ctx);
+    const konnectApiKey = gw.apiKey;
+    const konnectWalletId = gw.walletId;
 
     if (konnectApiKey) {
       try {
         const fullName = profile?.full_name || '';
-        const konnectRes = await fetch('https://api.konnect.network/api/v2/payments/init-payment', {
+        const konnectRes = await fetch(`${gw.base}/payments/init-payment`, {
           method: 'POST',
           headers: { 'x-api-key': konnectApiKey, 'Content-Type': 'application/json' },
           body: JSON.stringify({

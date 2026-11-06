@@ -10,6 +10,7 @@ export const SECTION_TYPES = [
   'hero_slider', 'social_icons', 'order_confirmation', 'order_summary', 'next_steps',
   'review_wall', 'faq_cards', 'cta_banner', 'before_after', 'stock_urgency', 'how_it_works', 'comparison', 'benefits_grid', 'key_stats',
   'product_reviews', 'photo_reviews', 'frequently_bought', 'upsell_products', 'volume_discount', 'gift_boxes', 'cart_reminder', 'thank_you_upsell',
+  'video', 'pricing_table', 'tabs', 'marquee', 'map', 'popup', 'team', 'timeline', 'social_feed', 'quote', 'collage', 'contact_cards', 'hotspots', 'feature_rows', 'split_faq',
 ];
 
 export const LIMITS = { maxPages: 25, maxSectionsPerPage: 40, maxBlocksPerSection: 12, maxBytes: 200 * 1024, maxString: 4000 };
@@ -53,11 +54,25 @@ function cleanAdvanced(st) {
   // Layout: spacing (px), content width, alignment, corner radius.
   const num = (k, min, max) => { if (k in st) { const n = Number(st[k]); st[k] = Number.isFinite(n) ? Math.min(max, Math.max(min, Math.round(n))) : 0; } };
   num('_mt', -120, 200); num('_mb', -120, 200); num('_pt', 0, 200); num('_pb', 0, 200); num('_px', 0, 120); num('_radius', 0, 48);
+  num('_ml', 0, 200); num('_mr', 0, 200); num('_pl', 0, 160); num('_pr', 0, 160); num('_gap', 0, 80); num('_maxw', 0, 1600);
+  num('_bg_angle', 0, 360); num('_overlay', 0, 90); num('_border_w', 0, 12);
+  if ('_bg_size' in st && !['cover', 'contain', 'auto', 'repeat'].includes(st._bg_size)) st._bg_size = 'cover';
+  if ('_bg_pos' in st && !['center', 'top', 'bottom', 'left', 'right'].includes(st._bg_pos)) st._bg_pos = 'center';
+  if ('_shadow' in st && !['', 'sm', 'md', 'lg'].includes(st._shadow)) st._shadow = '';
+  if ('_bg_fixed' in st) st._bg_fixed = !!st._bg_fixed;
+  if (typeof st._bg_image === 'string' && /["'()\\\s]/.test(st._bg_image)) st._bg_image = '';
   if ('_width' in st && !['', 'full', 'wide', 'normal', 'narrow'].includes(st._width)) st._width = '';
   if ('_anim' in st && !['none', 'fade', 'fade-up', 'fade-down', 'fade-left', 'fade-right', 'zoom', 'zoom-out', 'blur', 'flip'].includes(st._anim)) st._anim = 'none';
   num('_anim_dur', 100, 3000); num('_anim_delay', 0, 3000);
   if ('_anim_repeat' in st) st._anim_repeat = !!st._anim_repeat;
   if ('_align' in st && !['', 'left', 'center', 'right'].includes(st._align)) st._align = '';
+  // Per-element styles: keys are structural CSS paths, so only the strict nth-of-type form is kept.
+  if ('_el' in st) {
+    const PATH = /^(?:[a-z][a-z0-9]{0,9}:nth-of-type\(\d{1,3}\)>){0,24}[a-z][a-z0-9]{0,9}:nth-of-type\(\d{1,3}\)$/;
+    const raw = st._el && typeof st._el === 'object' && !Array.isArray(st._el) ? st._el : {};
+    st._el = Object.fromEntries(Object.entries(raw).filter(([k, v]) => k.length <= 500 && PATH.test(k) && v && typeof v === 'object' && !Array.isArray(v)).slice(0, 40));
+  }
+  if ('_global_id' in st) st._global_id = String(st._global_id || '').replace(/[^\w-]/g, '').slice(0, 64);
   return st;
 }
 

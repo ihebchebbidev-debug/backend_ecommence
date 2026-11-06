@@ -31,7 +31,7 @@ export default {
     if (!store) throw notFound('Boutique introuvable');
     const pub = await row(ctx, p_store_id, 'published');
     const section = Object.values(pub?.configuration?.pages || {}).flatMap(page => page.sections || [])
-      .find(s => s.id === p_section_id && (s.type === 'contact_form' || s.type === 'newsletter') && !s.hidden);
+      .find(s => s.id === p_section_id && (s.type === 'contact_form' || s.type === 'newsletter' || (s.type === 'popup' && s.settings?.collect_email)) && !s.hidden);
     if (!section) throw badRequest('Formulaire non publié');
     const name = String(p_name || '').trim(), email = String(p_email || '').trim().toLowerCase(), message = String(p_message || '').trim();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254 || name.length > 100 || message.length > 2000) throw badRequest('Champs invalides');

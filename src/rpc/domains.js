@@ -1,5 +1,6 @@
 // Seller domains require routing records and a request-specific ownership proof.
 import dns from 'node:dns/promises';
+import { domainToASCII } from 'node:url';
 import { badRequest, forbidden } from '../lib/errors.js';
 import { checkCertificate, healthChecks } from '../lib/domainHealth.js';
 
@@ -7,11 +8,25 @@ import { checkCertificate, healthChecks } from '../lib/domainHealth.js';
 export const platformIps = () => String(process.env.PLATFORM_DOMAIN_IPS || '186.241.19.85').split(',').map((s) => s.trim()).filter(Boolean);
 
 /** The API is the authority for instructions, including multi-address deployments. */
+// Registry suffixes with two labels (so shop.com.tn is a root domain, not a subdomain of com.tn).
+const TWO_PART_SUFFIXES = new Set(['com.tn', 'net.tn', 'org.tn', 'ens.tn', 'fin.tn', 'gov.tn', 'ind.tn', 'intl.tn', 'nat.tn', 'info.tn', 'perso.tn', 'tourism.tn',
+  'co.uk', 'org.uk', 'me.uk', 'co.ma', 'net.ma', 'org.ma', 'press.ma', 'com.dz', 'org.dz', 'net.dz', 'com.ly', 'com.eg', 'com.sa', 'com.qa', 'co.ae',
+  'com.fr', 'asso.fr', 'com.au', 'com.br', 'co.za', 'com.tr', 'co.in', 'com.mx', 'co.jp', 'com.cn', 'co.nz', 'com.ar', 'com.co', 'com.ng', 'co.ke']);
+/** Splits a host into its registrable root and the subdomain label(s) the seller types at their DNS provider. */
+export function domainShape(domain) {
+  const labels = String(domain).split('.');
+  const rootLen = labels.length >= 3 && TWO_PART_SUFFIXES.has(labels.slice(-2).join('.')) ? 3 : 2;
+  const sub = labels.slice(0, Math.max(0, labels.length - rootLen)).join('.');
+  return { apex: !sub, sub, root: labels.slice(-rootLen).join('.') };
+}
 export function dnsRecords(domain, id) {
+  const { apex, sub } = domainShape(domain);
+  // A subdomain (shop.example.com) only needs its own address and proof; there is no www.shop.example.com.
+  const host = apex ? '@' : sub;
   return [
-    ...platformIps().map((ip) => ({ type: ip.includes(':') ? 'AAAA' : 'A', name: '@', value: ip })),
-    { type: 'CNAME', name: 'www', value: domain },
-    { type: 'TXT', name: '_e-commence', value: ownershipRecord(id) },
+    ...platformIps().map((ip) => ({ type: ip.includes(':') ? 'AAAA' : 'A', name: host, value: ip })),
+    ...(apex ? [{ type: 'CNAME', name: 'www', value: domain }] : []),
+    { type: 'TXT', name: apex ? '_e-commence' : `_e-commence.${sub}`, value: ownershipRecord(id) },
   ];
 }
 
@@ -35,15 +50,16 @@ export async function checkDomainDns(domain, id) {
     ]);
     return { ips: results.flatMap((r) => r.ips), complete: results.every((r) => r.complete) };
   };
+  const { apex } = domainShape(domain);
   const [root, www, txt] = await Promise.all([
-    addresses(domain), addresses(`www.${domain}`), resolver.resolveTxt(`_e-commence.${domain}`).catch(() => []),
+    addresses(domain), apex ? addresses(`www.${domain}`) : Promise.resolve(null), resolver.resolveTxt(`_e-commence.${domain}`).catch(() => []),
   ]);
-  const verdict = dnsVerdict(root.ips, www.ips, platformIps());
+  const verdict = dnsVerdict(root.ips, www ? www.ips : root.ips, platformIps());
   verdict.root = verdict.root && root.complete;
-  verdict.www = verdict.www && www.complete;
+  verdict.www = www ? verdict.www && www.complete : true; // subdomains have no www to check
   verdict.ok = verdict.root && verdict.www;
   const ownership = txt.some((chunks) => chunks.join('') === ownershipRecord(id));
-  return { ...verdict, ok: verdict.ok && ownership, ownership, found: { root: root.ips, www: www.ips, txt: txt.map((chunks) => chunks.join('')).sort() }, expected: platformIps(), expected_proof: ownershipRecord(id), dns_records: dnsRecords(domain, id) };
+  return { ...verdict, ok: verdict.ok && ownership, ownership, apex, found: { root: root.ips, www: www ? www.ips : [], txt: txt.map((chunks) => chunks.join('')).sort() }, expected: platformIps(), expected_proof: ownershipRecord(id), dns_records: dnsRecords(domain, id) };
 }
 
 /** Activates the request and links it to the shop; retires the shop's previous active domain. */
@@ -87,8 +103,12 @@ async function auditVerification(t, ctx, req, storeId, result) {
     ['domain_verification', ctx.userId, storeId, details]);
 }
 
-export const normalizeDomain = (v) => String(v || '').trim().toLowerCase()
-  .replace(/^https?:\/\//, '').replace(/\/.*$/, '').replace(/:\d+$/, '').replace(/\.$/, '').replace(/^www\./, '');
+export const normalizeDomain = (v) => {
+  const host = String(v || '').trim().toLowerCase()
+    .replace(/^https?:\/\//, '').replace(/[/?#].*$/, '').replace(/:\d+$/, '').replace(/\.$/, '').replace(/^www\./, '');
+  // Accented / Arabic domains are stored in their DNS (punycode) form.
+  return /[^\x00-\x7f]/.test(host) ? (domainToASCII(host) || host) : host;
+};
 
 async function requireSuperAdmin(ctx) {
   ctx.requireAuth();
@@ -204,9 +224,10 @@ const domainRpc = {
       const results = await Promise.all(ips.map((ip) => checkCertificate(host, ip)));
       return results.find((r) => !r.ready) || results[0] || notChecked;
     };
+    const notNeeded = { ready: true, reason: 'not_needed' };
     const [root, www] = v.ok && linked ? await Promise.all([
-      probe(req.domain, v.found.root), probe(`www.${req.domain}`, v.found.www),
-    ]) : [notChecked, notChecked];
+      probe(req.domain, v.found.root), v.apex === false ? notNeeded : probe(`www.${req.domain}`, v.found.www),
+    ]) : [notChecked, v.apex === false ? notNeeded : notChecked];
     const checks = healthChecks(req.domain, v, { root, www }, linked);
     return { ...v, ok: checks.every((c) => c.ready), dns_ok: v.ok, linked, shop_name: shop?.store_name,
       checked_at: new Date().toISOString(), https: { root, www }, checks, next_fix: checks.find((c) => !c.ready)?.fix || null };

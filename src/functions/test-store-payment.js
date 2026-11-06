@@ -78,9 +78,12 @@ export default async function testStorePayment(req, res, ctx) {
         const r = await fetch(`${paymeeBase(creds)}/payments/connection-test/check`, {
           headers: { Authorization: `Token ${apiKey}` }, signal: AbortSignal.timeout(15000),
         });
+        const d = await r.json().catch(() => null);
         if (r.status === 401 || r.status === 403) message = 'Token Paymee refusé (vérifiez le mode test/production)';
         else if (r.status >= 500) message = `Paymee indisponible (HTTP ${r.status}), réessayez plus tard`;
-        else { ok = true; message = 'Token Paymee accepté'; }
+        // Only a real Paymee JSON answer to an authenticated lookup (found or "unknown token") confirms the key.
+        else if ((r.ok || r.status === 404) && d && typeof d === 'object') { ok = true; message = 'Token Paymee accepté'; }
+        else message = `Paymee: réponse inattendue (HTTP ${r.status}), clé non confirmée`;
       } catch (e) {
         message = `Erreur réseau: ${e instanceof Error ? e.message : 'unknown'}`;
       }
@@ -98,9 +101,11 @@ export default async function testStorePayment(req, res, ctx) {
           headers: { Authorization: `Bearer ${pub}:${sec}` },
           signal: AbortSignal.timeout(15000),
         });
+        const d = await r.json().catch(() => null);
         if (r.status === 401 || r.status === 403) message = 'Clés Flouci refusées (vérifiez la clé publique et la clé privée)';
         else if (r.status >= 500) message = `Flouci indisponible (HTTP ${r.status}), réessayez plus tard`;
-        else { ok = true; message = 'Clés Flouci acceptées'; }
+        else if ((r.ok || r.status === 404) && d && typeof d === 'object') { ok = true; message = 'Clés Flouci acceptées'; }
+        else message = `Flouci: réponse inattendue (HTTP ${r.status}), clés non confirmées`;
       } catch (e) {
         message = `Erreur réseau: ${e instanceof Error ? e.message : 'unknown'}`;
       }

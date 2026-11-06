@@ -2,6 +2,7 @@
 import { json, methodGuard } from './_shared/respond.js';
 
 import { canEncryptPaymentCredentials, encryptPaymentJson } from './_shared/paymentCrypto.js';
+import { normalizeMode } from './_shared/storeGateways.js';
 export { canEncryptPaymentCredentials, encryptPaymentJson, decryptPaymentJson } from './_shared/paymentCrypto.js';
 
 export function maskPaymentCredentials(creds) {
@@ -58,6 +59,11 @@ export default async function savePaymentIntegration(req, res, ctx) {
       if (!credentials?.[fieldKey]) return json(res, { error: `Champ requis manquant: ${fieldKey}` }, 400);
     }
     for (const k of Object.keys(credentials)) credentials[k] = String(credentials[k]).trim();
+    if ('mode' in credentials) {
+      const mode = normalizeMode(credentials.mode);
+      if (!mode) return json(res, { error: 'Mode invalide: utilisez "test" ou "live"' }, 400);
+      credentials.mode = mode;
+    }
     const fmt = formatError(provider, credentials);
     if (fmt) return json(res, { error: fmt }, 400);
   }
