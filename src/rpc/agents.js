@@ -344,7 +344,7 @@ export default {
       count(*) FILTER (WHERE status='delivered')::int AS delivered_orders,
       count(*) FILTER (WHERE status='pending')::int AS pending_orders,
       COALESCE(sum(amount) FILTER (WHERE status='delivered'),0) AS total_revenue
-      FROM public.orders WHERE store_id=$1 AND deleted_at IS NULL
+      FROM public.orders WHERE store_id=$1 AND deleted_at IS NULL AND coalesce(status,'') <> 'abandoned'
       AND ($2::boolean=false OR status=ANY($3::text[]))`, [session.store_id,session.is_confirmation_agent,CONFIRMATION_STATUSES]);
     const store = await ctx.one('SELECT currency FROM public.platform_stores WHERE id=$1',[session.store_id]);
     return {...row,currency:store?.currency};

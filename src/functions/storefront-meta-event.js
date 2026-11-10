@@ -11,6 +11,8 @@ const BROWSER_EVENTS = new Set(['ViewContent', 'AddToCart', 'InitiateCheckout'])
 
 export function purchaseAllowed(order, now = Date.now()) {
   if (!order) return false;
+  // An incomplete checkout (phone captured only) is never a purchase.
+  if (order.status === 'abandoned') return false;
   const age = now - new Date(order.created_at || 0).getTime();
   if (!(age >= 0 && age < MAX_AGE_MS)) return false;
   // Card orders only count once paid; cash-on-delivery orders count when placed.
@@ -50,7 +52,7 @@ export default async function storefrontMetaEvent(req, res, ctx) {
     const order_id = str(b.order_id, 64);
     if (!order_id) return json(res, { error: 'order_id is required' }, 400);
     const order = await ctx.q(
-      `SELECT id, amount, currency, payment_status, payment_provider, created_at, checkout_request_id, client_id, client_name, client_phone, client_phone2, city, region
+      `SELECT id, status, amount, currency, payment_status, payment_provider, created_at, checkout_request_id, client_id, client_name, client_phone, client_phone2, city, region
          FROM public.orders WHERE id=$1 AND store_id=$2 AND deleted_at IS NULL`,
       [order_id, store_id],
     ).then((r) => r[0]).catch(() => null);

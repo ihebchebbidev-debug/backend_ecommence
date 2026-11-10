@@ -69,6 +69,28 @@ function projectSecureRow(row, storeCanView) {
   };
 }
 
+// Seller list sorting: allowlisted columns only, with the id as a stable tie-breaker so paging never repeats or skips rows.
+const ORDER_SORT = {
+  created_at: 'o.created_at',
+  order_number: "lpad(coalesce(o.order_number,''), 20, '0')",
+  client_name: 'lower(o.client_name)',
+  amount: 'o.amount',
+};
+export function orderListSort(col, dir) {
+  const expr = ORDER_SORT[col] || ORDER_SORT.created_at;
+  const d = String(dir).toLowerCase() === 'asc' ? 'ASC' : 'DESC';
+  return `${expr} ${d} NULLS LAST, o.id ${d}`;
+}
+
+/** Extra units each product needs after an order edit (negative = units given back). */
+export function stockDelta(before, after) {
+  const delta = new Map();
+  for (const r of before) delta.set(String(r.product_id), (delta.get(String(r.product_id)) || 0) - Number(r.qty || 0));
+  for (const r of after) delta.set(String(r.product_id), (delta.get(String(r.product_id)) || 0) + Number(r.qty || 0));
+  for (const [k, v] of [...delta]) if (!v) delta.delete(k);
+  return delta;
+}
+
 function projectListRow(row, storeCanView) {
   const canView = storeCanView && row.plan_hidden !== true;
   return {
@@ -97,7 +119,7 @@ export default {
        FROM public.orders o
        LEFT JOIN public.products pr ON pr.id = o.product_id
        WHERE o.store_id = $1 AND o.deleted_at IS NULL
-       ORDER BY o.created_at DESC NULLS LAST`,
+       ORDER BY o.created_at DESC NULLS LAST, o.id DESC`,
       [p_store_id],
     );
     return rows.map((r) => projectListRow(r, canView));
@@ -113,17 +135,21 @@ export default {
       p_limit = 50,
       p_offset = 0,
       p_include_trash = false,
+      p_sort_col = 'created_at',
+      p_sort_dir = 'desc',
     } = args;
     await ctx.assertStoreAccess(p_store_id);
     const canView = await ctx.canViewCustomerData(p_store_id);
+    const orderBy = orderListSort(p_sort_col, p_sort_dir);
 
     const conds = ['o.store_id = $1'];
     const params = [p_store_id];
     if (!p_include_trash) conds.push('o.deleted_at IS NULL');
     else conds.push('o.deleted_at IS NOT NULL');
     if (p_status) {
-      params.push(p_status);
-      conds.push(`o.status = $${params.length}`);
+      // The transit tab also lists orders handed to a carrier ('shipped').
+      params.push(p_status === 'transit' ? ['transit', 'shipped'] : [p_status]);
+      conds.push(`o.status = ANY($${params.length}::text[])`);
     }
     if (p_search) {
       params.push(`%${p_search}%`);
@@ -149,7 +175,7 @@ export default {
        FROM public.orders o
        LEFT JOIN public.products pr ON pr.id = o.product_id
        WHERE ${where}
-       ORDER BY o.created_at DESC NULLS LAST
+       ORDER BY ${orderBy}
        LIMIT $${limitIdx} OFFSET $${offsetIdx}`,
       params,
     );
@@ -213,7 +239,7 @@ export default {
         `SELECT COUNT(*)::int AS phone_orders,
                 COUNT(*) FILTER (WHERE status = 'confirmed')::int AS phone_confirmed,
                 COUNT(*) FILTER (WHERE status = 'delivered')::int AS phone_delivered
-         FROM public.orders WHERE store_id = $1 AND client_phone = $2`,
+         FROM public.orders WHERE store_id = $1 AND client_phone = $2 AND coalesce(status,'') <> 'abandoned'`,
         [p_store_id, phone],
       );
       const phoneOrders = stats?.phone_orders ?? 0;
@@ -253,7 +279,7 @@ export default {
                 COUNT(*) FILTER (WHERE status = 'delivered')::int AS delivered,
                 COUNT(*) FILTER (WHERE status = 'rejected')::int AS rejected,
                 COUNT(*) FILTER (WHERE status = 'returned')::int AS returned
-         FROM public.orders WHERE store_id = $1 AND client_phone = $2`,
+         FROM public.orders WHERE store_id = $1 AND client_phone = $2 AND coalesce(status,'') <> 'abandoned'`,
         [p_store_id, phone],
       );
       const total = stats?.total_orders ?? 0;
@@ -275,7 +301,10 @@ export default {
     if (!order) return [];
     await ctx.assertStoreAccess(order.store_id);
     const canView = await ctx.canViewCustomerData(order.store_id);
-    const row = await ctx.one(`SELECT o.*, EXISTS (SELECT 1 FROM public.store_plan_usage pu WHERE pu.order_id = o.id AND pu.commission_status = 'unpaid') AS plan_hidden FROM public.orders o WHERE o.id = $1`, [p_order_id]);
+    const row = await ctx.one(`SELECT o.*, pr.image_url AS product_image_url,
+        EXISTS (SELECT 1 FROM public.store_plan_usage pu WHERE pu.order_id = o.id AND pu.commission_status = 'unpaid') AS plan_hidden,
+        EXISTS (SELECT 1 FROM public.coupon_redemptions cr WHERE cr.order_id = o.id) AS has_coupon_redemption
+      FROM public.orders o LEFT JOIN public.products pr ON pr.id = o.product_id WHERE o.id = $1`, [p_order_id]);
     if (!row) return [];
     const items = await ctx.q(
       `SELECT id, product_id, product_name, bundle_id, bundle_name, bundle_label,
@@ -283,7 +312,17 @@ export default {
        FROM public.order_items WHERE order_id = $1 ORDER BY created_at, id`,
       [p_order_id],
     );
-    return [{ ...projectSecureRow(row, canView), items }];
+    // Detail screens need the address, payment and packing state; customer fields stay masked like the list.
+    return [{
+      ...projectListRow(row, canView),
+      prepared_at: row.prepared_at ?? null,
+      prepared_by: row.prepared_by ?? null,
+      coupon_code: row.coupon_code ?? null,
+      discount_amount: row.discount_amount ?? 0,
+      merchandise_subtotal: row.merchandise_subtotal ?? null,
+      has_coupon_redemption: row.has_coupon_redemption === true,
+      items,
+    }];
   },
 
   /** Seller web form: atomically replaces an order's display lines (main + extras). order_items has no REST access. */
@@ -304,12 +343,24 @@ export default {
     if (!order) throw badRequest('Order not found');
     await permission(ctx, order.store_id, 'canManageOrders');
     return ctx.tx(async (t) => {
-      await t.q('SELECT id FROM public.orders WHERE id = $1 FOR UPDATE', [orderId]);
+      const locked = await t.one(`SELECT o.id, o.status, o.merchandise_subtotal, coalesce(s.released, false) AS released
+        FROM public.orders o LEFT JOIN public.order_stock_state s ON s.order_id = o.id WHERE o.id = $1 FOR UPDATE OF o`, [orderId]);
+      // Checkout orders hold stock for their lines: keep that reservation in step with the edit.
+      const holdsStock = locked && locked.merchandise_subtotal != null && locked.status !== 'abandoned' && locked.released !== true;
+      const before = holdsStock ? await t.q('SELECT product_id, sum(quantity)::int AS qty FROM public.order_items WHERE order_id = $1 AND product_id IS NOT NULL GROUP BY product_id', [orderId]) : [];
       await t.q('DELETE FROM public.order_items WHERE order_id = $1', [orderId]);
       for (const l of lines) {
-        await t.q(`INSERT INTO public.order_items (order_id, product_id, product_name, quantity, unit_price, line_total)
-          SELECT $1, (SELECT p.id FROM public.products p WHERE p.id = $2 AND p.store_id = $6), $3, $4, $5, $7`,
+        // clock_timestamp keeps the saved line order (main product first) when lines are read back.
+        await t.q(`INSERT INTO public.order_items (order_id, product_id, product_name, quantity, unit_price, line_total, created_at)
+          SELECT $1, (SELECT p.id FROM public.products p WHERE p.id = $2 AND p.store_id = $6), $3, $4, $5, $7, clock_timestamp()`,
           [orderId, l.productId, l.name, l.qty, l.unit, order.store_id, l.total]);
+      }
+      if (holdsStock) {
+        const after = await t.q('SELECT product_id, sum(quantity)::int AS qty FROM public.order_items WHERE order_id = $1 AND product_id IS NOT NULL GROUP BY product_id', [orderId]);
+        const delta = stockDelta(before, after);
+        for (const [productId, change] of [...delta.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+          await t.q('UPDATE public.products SET stock = stock - $2 WHERE id = $1 AND store_id = $3 AND stock IS NOT NULL', [productId, change, order.store_id]);
+        }
       }
       return { ok: true, count: lines.length };
     });
@@ -407,7 +458,8 @@ export default {
             count(*) FILTER (WHERE $3::text IS NOT NULL AND client_ip = $3 AND created_at > now() - interval '24 hours')::int AS ip24h,
             count(*) FILTER (WHERE $2 <> '' AND right(regexp_replace(coalesce(client_phone,''), '\\D', '', 'g'), 8) = $2 AND status = 'pending')::int AS pending,
             extract(epoch FROM now() - max(created_at) FILTER (WHERE $2 <> '' AND right(regexp_replace(coalesce(client_phone,''), '\\D', '', 'g'), 8) = $2)) / 3600 AS hours_since_last
-          FROM public.orders WHERE store_id=$1 AND coalesce(status,'') NOT ILIKE 'cancel%' AND created_at > now() - interval '30 days'`,
+           FROM public.orders WHERE store_id=$1 AND coalesce(status,'') NOT ILIKE 'cancel%' AND coalesce(status,'') <> 'abandoned'
+             AND created_at > now() - interval '30 days'`,
           [p_store_id, phoneDigits, buyerIp]);
         const msg = limitViolation(limits, { phone24h: st?.phone24h, ip24h: st?.ip24h, pending: st?.pending,
           hoursSinceLast: st?.hours_since_last == null ? null : Number(st.hours_since_last) });
@@ -436,17 +488,18 @@ export default {
         );
       }
 
-      const seq = await t.one(
+      // A promoted capture keeps its number, so it must not burn a new one (no gaps in numbering).
+      const seq = abandoned?.order_number ? null : await t.one(
         `INSERT INTO public.store_order_seq (store_id, next_val) VALUES ($1, 1)
          ON CONFLICT (store_id) DO UPDATE SET next_val = public.store_order_seq.next_val + 1
          RETURNING next_val`,
         [p_store_id],
       );
-      const orderNumber = String(seq.next_val).padStart(5, '0');
+      const orderNumber = abandoned?.order_number || String(seq.next_val).padStart(5, '0');
       const first = quote.rows[0];
 
       const orderValues = [
-        p_store_id, abandoned?.order_number || orderNumber, clientRow.id, client.name, client.phone, client.phone2,
+        p_store_id, orderNumber, clientRow.id, client.name, client.phone, client.phone2,
         first.product.id, first.product.name, first.qty, quote.total, quote.delivery, p_currency,
         first.bundle?.id || null, first.bundle?.name || null, first.bundle?.label || null,
         first.bundlePrice, first.bundle?.quantity || null,
@@ -460,7 +513,8 @@ export default {
         bundle_id=$13,bundle_name=$14,bundle_label=$15,bundle_price=$16,bundle_quantity=$17,
         payment_provider=$18,address=$19,city=$20,region=$21,merchandise_subtotal=$22,discount_amount=$23,
         coupon_code=$24,checkout_request_id=$25,checkout_fingerprint=$26,notes=$27,client_ip=$28,checkout_answers=$29,
-        updated_at=now() WHERE store_id=$1 AND id=$30 AND status='abandoned' RETURNING id,order_number,amount`, [...orderValues, abandoned.id]) : await t.one(
+        -- The purchase happens now (lists, reports, ad events); a capture the seller trashed comes back as a real order.
+        created_at=now(),deleted_at=NULL,updated_at=now() WHERE store_id=$1 AND id=$30 AND status='abandoned' RETURNING id,order_number,amount`, [...orderValues, abandoned.id]) : await t.one(
         `INSERT INTO public.orders (
            store_id, order_number, client_id, client_name, client_phone, client_phone2,
            product_id, product_name, quantity, amount, delivery_fee, currency, status,
@@ -473,13 +527,15 @@ export default {
       );
 
       await recordCheckoutConsent(t, order.id, p_store_id, adConsent);
+      // The capture's basket preview is replaced by the priced, stock-reserving lines below.
+      if (abandoned) await t.q('DELETE FROM public.order_items WHERE order_id = $1', [order.id]);
 
       for (const r of quote.rows) {
         await t.q(
           `INSERT INTO public.order_items (
              order_id, product_id, product_name, bundle_id, bundle_name, bundle_label,
-             bundle_price, bundle_quantity, quantity, unit_price, line_total, delivery_fee, discount_amount
-           ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+             bundle_price, bundle_quantity, quantity, unit_price, line_total, delivery_fee, discount_amount, created_at
+           ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,clock_timestamp())`,
           [
             order.id, r.product.id, r.product.name, r.bundle?.id || null, r.bundle?.name || null,
             r.bundle?.label || null, r.bundlePrice, r.bundle?.quantity || null,

@@ -1,6 +1,7 @@
 // Delivery RPCs — spec 3.7. Never expose encrypted credential columns.
 import { syncOrderDeliveryStatus } from '../functions/_shared/delivery.js';
 import { forbidden } from '../lib/errors.js';
+import { permission } from '../lib/commerce.js';
 
 const PROVIDER_COLUMNS = `
   dp.id AS provider_id,
@@ -133,6 +134,8 @@ export default {
 
   async update_delivery_shipment_status({ p_shipment_id, p_store_id, p_new_status }, ctx) {
     await ctx.assertStoreAccess(p_store_id, ['owner', 'admin', 'manager']);
+    // Changing a shipment also changes its order, so it needs the same right as editing orders.
+    await permission(ctx, p_store_id, 'canManageOrders');
 
     const shipment = await ctx.one(
       'SELECT id, order_id FROM public.delivery_shipments WHERE id = $1 AND store_id = $2',

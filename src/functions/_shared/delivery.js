@@ -168,7 +168,8 @@ export function isAllowedCarrierUrl(value) {
 }
 
 export async function syncOrderDeliveryStatus(ctx, orderId, storeId, status) {
-  const orderStatus = { delivered: 'delivered', returned: 'returned', in_transit: 'shipped' }[status] || null;
+  // Carrier 'in_transit' is the seller's 'transit' status (its own tab and automation trigger).
+  const orderStatus = { delivered: 'delivered', returned: 'returned', in_transit: 'transit' }[status] || null;
   await ctx.q(`UPDATE public.orders SET delivery_status=$1, status=COALESCE($2,status), updated_at=now() WHERE id=$3 AND store_id=$4`, [status, orderStatus, orderId, storeId]);
 }
 

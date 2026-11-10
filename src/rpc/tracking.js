@@ -2,7 +2,7 @@ import { notFound } from '../lib/errors.js';
 import { id, text, phone, publicStore, rateLimit } from '../lib/commerce.js';
 
 export function projectTracking(order, items) {
-  const state = {pending:'pending',confirmed:'confirmed',shipped:'shipped',delivered:'delivered',cancelled:'cancelled',canceled:'cancelled',returned:'returned'};
+  const state = {pending:'pending',confirmed:'confirmed',shipped:'shipped',transit:'shipped',in_transit:'shipped',delivered:'delivered',cancelled:'cancelled',canceled:'cancelled',returned:'returned'};
   return {
     order_number:order.order_number,currency:order.currency,
     subtotal:order.merchandise_subtotal ?? Number(order.amount)-Number(order.delivery_fee),

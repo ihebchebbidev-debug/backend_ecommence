@@ -9,7 +9,7 @@ import { normalizeScanCode } from './mobile.js';
 export const SELLER_STATUSES = ['pending', 'confirmed', 'attempt1', 'attempt2', 'transit', 'delivered', 'rejected', 'returned', 'archived'];
 export const MEMBER_STATUSES = ['pending', 'confirmed', 'tentative_1', 'tentative_2', 'answered', 'wrong_number', 'attempt1', 'attempt2', 'rejected', 'shipped', 'transit', 'delivered', 'returned'];
 // Orders in these states can no longer be prepared.
-const NOT_PREPARABLE = ['rejected', 'returned', 'archived', 'delivered'];
+const NOT_PREPARABLE = ['abandoned', 'rejected', 'returned', 'archived', 'delivered'];
 const EDITABLE = ['client_name', 'client_phone', 'city', 'address', 'notes'];
 const LIMITS = { client_name: 120, client_phone: 32, city: 120, address: 300, notes: 2000 };
 
@@ -88,8 +88,9 @@ export default {
     if ((!actor.visible || planHidden) && Object.keys(patch).some(k => k !== 'notes')) throw forbidden('Customer data locked');
     return ctx.tx(async t => once(t, actor.storeId, key, 'order_update', async () => {
       await setActor(t, actor);
-      const row = await t.one('SELECT id, updated_at FROM public.orders WHERE id=$1 AND store_id=$2 AND deleted_at IS NULL FOR UPDATE', [orderId, actor.storeId]);
+      const row = await t.one('SELECT id, status, updated_at FROM public.orders WHERE id=$1 AND store_id=$2 AND deleted_at IS NULL FOR UPDATE', [orderId, actor.storeId]);
       if (!row) throw forbidden('Order not found in this store');
+      if (row.status === 'abandoned') throw conflict('Incomplete checkouts are read-only', 'ORDER_ABANDONED');
       if (!sameVersion(row, args.p_expected_updated_at)) throw conflict('Order changed since it was opened', 'STALE_ORDER');
       const keys = Object.keys(patch);
       const sets = keys.map((k, i) => `${k}=$${i + 3}`).join(', ');
@@ -108,6 +109,8 @@ export default {
       await setActor(t, actor);
       const row = await t.one('SELECT id, status, updated_at FROM public.orders WHERE id=$1 AND store_id=$2 AND deleted_at IS NULL FOR UPDATE', [orderId, actor.storeId]);
       if (!row) throw forbidden('Order not found in this store');
+      // An incomplete checkout becomes an order only when the shopper completes it (stock, pricing, billing).
+      if (row.status === 'abandoned') throw conflict('Incomplete checkouts are read-only', 'ORDER_ABANDONED');
       if (!sameVersion(row, args.p_expected_updated_at)) throw conflict('Order changed since it was opened', 'STALE_ORDER');
       if (actor.confirmationAgent && (!CONFIRMATION_STATUSES.includes(status) || !CONFIRMATION_STATUSES.includes(row.status || 'pending'))) throw forbidden('Confirmation agents can only handle orders awaiting confirmation');
       if (row.status === status) return { outcome: 'unchanged', order: await t.one(`SELECT ${RETURNING} FROM public.orders WHERE id=$1`, [orderId]) };

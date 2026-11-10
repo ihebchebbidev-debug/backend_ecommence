@@ -12,7 +12,7 @@
     "smoke": "node scripts/smoke-test.js",
     "test": "node scripts/test-all.js",
     "test:static": "node scripts/test-static.js",
-    "test:orders": "node --test tests/orderFixes.e2e.mjs"
+    "test:orders": "node --test --test-concurrency=1 tests/orderFixes.e2e.mjs tests/abandonedOrders.e2e.mjs"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
