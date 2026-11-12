@@ -36,7 +36,8 @@ export default async function createDeliveryShipment(req, res, ctx) {
   else return json(res, { error: 'Provider requis' }, 400);
 
   if (!provider) return json(res, { error: 'Provider introuvable' }, 404);
-  if (!provider.is_active) return json(res, { error: 'Provider désactivé' }, 403);
+  // Admin switch (/admin/delivery-providers) turns both flags off together.
+  if (!provider.is_active || provider.is_visible_to_stores === false) return json(res, { error: 'Provider désactivé', code: 'provider_disabled' }, 403);
 
   const integration = await ctx.q(
     'SELECT * FROM public.store_delivery_integrations WHERE store_id=$1 AND provider_id=$2',

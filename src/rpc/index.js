@@ -38,6 +38,7 @@ import mobilePushRpc from './mobilePush.js';
 import mobileCommerceRpc from './mobileCommerce.js';
 import mobileCatalogRpc from './mobileCatalog.js';
 import accountRpc from './account.js';
+import trafficRpc from './traffic.js';
 
 // Loyalty lives in loyalty.js; only the email marketing RPCs come from marketing.js.
 const emailMarketingRpc = Object.fromEntries(Object.entries(marketingRpc).filter(([k]) => k.startsWith('email_')));
@@ -72,6 +73,7 @@ export const rpcRegistry = {
   ...mobileCommerceRpc,
   ...mobileCatalogRpc,
   ...accountRpc,
+  ...trafficRpc,
 };
 
 export const rpcRouter = express.Router();
@@ -83,6 +85,7 @@ const handle = asyncHandler(async (req, res) => {
 
   const args = req.method === 'GET' ? req.query : req.body || {};
   if (req.ctx && !req.ctx.requestIp) req.ctx.requestIp = req.ip;
+  if (req.ctx && !req.ctx.requestHeaders) req.ctx.requestHeaders = req.headers;
   const result = await impl(args, req.ctx);
 
   // PostgREST returns `null` (not an empty body) for void functions.

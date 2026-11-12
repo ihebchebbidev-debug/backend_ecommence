@@ -35,6 +35,7 @@ export function errorHandler(err, req, res, _next) {
   const where = { reqId: req?.id, method: req?.method, path: req?.originalUrl?.split('?')[0], role: req?.ctx?.role };
   const e = err instanceof ApiError ? err : err.code && err.severity ? fromPgError(err) : null;
 
+  if (req) req.logError = e ? `${e.code || e.status}: ${e.message}` : err?.message;
   if (e) {
     const fields = { ...where, status: e.status, code: e.code, details: e.details, hint: e.hint, message: e.message };
     if (e.status >= 500) log.error('request error', fields);

@@ -10,7 +10,7 @@ export const SECTION_TYPES = [
   'hero_slider', 'social_icons', 'order_confirmation', 'order_summary', 'next_steps',
   'review_wall', 'faq_cards', 'cta_banner', 'before_after', 'stock_urgency', 'how_it_works', 'comparison', 'benefits_grid', 'key_stats',
   'product_reviews', 'photo_reviews', 'frequently_bought', 'upsell_products', 'volume_discount', 'gift_boxes', 'cart_reminder', 'thank_you_upsell',
-  'video', 'pricing_table', 'tabs', 'marquee', 'map', 'popup', 'team', 'timeline', 'social_feed', 'quote', 'collage', 'contact_cards', 'hotspots', 'feature_rows', 'split_faq',
+  'video', 'pricing_table', 'tabs', 'marquee', 'map', 'popup', 'team', 'timeline', 'social_feed', 'quote', 'collage', 'contact_cards', 'hotspots', 'feature_rows', 'split_faq', 'icon_list', 'image_stack',
 ];
 
 export const LIMITS = { maxPages: 25, maxSectionsPerPage: 40, maxBlocksPerSection: 12, maxBytes: 200 * 1024, maxString: 4000 };

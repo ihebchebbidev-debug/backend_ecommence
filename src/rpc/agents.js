@@ -481,6 +481,11 @@ export default {
     if (p_module === 'codes_promo') {
       const adapter = scopedContext(ctx, session);
       if (p_action === 'delete') return coupons.set_store_coupon_active({ p_store_id: session.store_id, p_coupon_id: p_id, p_active: false }, adapter);
+      // An on/off switch is a modify action that changes only the active flag.
+      const keys = Object.keys(p_values || {});
+      if (p_action === 'update' && keys.length === 1 && keys[0] === 'active') {
+        return coupons.set_store_coupon_active({ p_store_id: session.store_id, p_coupon_id: p_id, p_active: p_values.active }, adapter);
+      }
       return coupons.save_store_coupon({ p_store_id: session.store_id, p_coupon_id: p_action === 'update' ? p_id : null, p_coupon: p_values }, adapter);
     }
     const values = Object.fromEntries(Object.entries(p_values || {}).filter(([k]) => cols.has(k) && mod.fields.includes(k)));

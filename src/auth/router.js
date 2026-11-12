@@ -30,7 +30,13 @@ const publicUser = (u) => ({
   updated_at: u.updated_at,
 });
 
-async function newSession(user, req) {
+/** True for an access token minted by /verify from a reset link within the last hour. */
+export function isFreshRecoverySession(claims) {
+  const entry = Array.isArray(claims?.amr) ? claims.amr.find((a) => a?.method === 'recovery') : null;
+  return !!entry && Number(entry.timestamp) > Math.floor(Date.now() / 1000) - 3600;
+}
+
+async function newSession(user, req, claims = {}) {
   const session = await one(
     `INSERT INTO auth.sessions (user_id, user_agent, ip, not_after)
      VALUES ($1, $2, $3, now() + ($4 || ' seconds')::interval) RETURNING *`,
@@ -45,7 +51,7 @@ async function newSession(user, req) {
   await q('UPDATE auth.users SET last_sign_in_at = now(), updated_at = now() WHERE id = $1', [user.id]);
 
   return {
-    access_token: signAccessToken(user, session.id),
+    access_token: signAccessToken(user, session.id, claims),
     token_type: 'bearer',
     expires_in: config.accessTokenTtl,
     expires_at: Math.floor(Date.now() / 1000) + config.accessTokenTtl,
@@ -255,8 +261,11 @@ authRouter.put(
     const { password, email, phone, data, current_password } = req.body || {};
     const sets = [];
     const params = [];
-    // Signed-in password change: when the caller sends the current password, verify it.
-    // (The recovery page sends no current_password and relies on its recovery session.)
+    // Signed-in password changes must prove the current password; only a fresh session
+    // opened from a password-reset link may skip it (see /verify below).
+    if (password && current_password === undefined && !isFreshRecoverySession(req.ctx.claims)) {
+      throw new ApiError(400, 'Mot de passe actuel requis', { code: 'current_password_required' });
+    }
     if (password && current_password !== undefined) {
       const row = await one('SELECT encrypted_password FROM auth.users WHERE id = $1', [user.id]);
       const ok = row?.encrypted_password && await bcrypt.compare(String(current_password), row.encrypted_password);
@@ -303,7 +312,8 @@ authRouter.post(
   asyncHandler(async (req, res) => {
     const email = String(req.body?.email || '').toLowerCase();
     const user = await one('SELECT * FROM auth.users WHERE email = $1 AND deleted_at IS NULL', [email]);
-    if (user) {
+    // When reset codes are required for this account, the only way in is /otp/reset with the code.
+    if (user && !(await pickChannel('reset', user))) {
       const token = crypto.randomBytes(24).toString('base64url');
       await q('UPDATE auth.users SET recovery_token = $1, recovery_sent_at = now() WHERE id = $2', [token, user.id]);
       const redirect = req.body?.redirect_to || `${config.publicUrl}/reset-password`;
@@ -328,7 +338,7 @@ authRouter.post(
     );
     if (!user) throw new ApiError(401, 'Token has expired or is invalid', { code: 'otp_expired' });
     await q('UPDATE auth.users SET recovery_token = NULL WHERE id = $1', [user.id]);
-    return res.json(await newSession(user, req));
+    return res.json(await newSession(user, req, { amr: [{ method: 'recovery', timestamp: Math.floor(Date.now() / 1000) }] }));
   }),
 );
 

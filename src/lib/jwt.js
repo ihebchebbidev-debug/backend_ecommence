@@ -2,7 +2,7 @@ import jwt from 'jsonwebtoken';
 import { config } from '../config.js';
 
 /** Access token with the same claim shape Supabase/GoTrue issues. */
-export function signAccessToken(user, sessionId) {
+export function signAccessToken(user, sessionId, extra = {}) {
   const now = Math.floor(Date.now() / 1000);
   return jwt.sign(
     {
@@ -14,6 +14,7 @@ export function signAccessToken(user, sessionId) {
       session_id: sessionId,
       app_metadata: { provider: 'email', providers: ['email'] },
       user_metadata: user.raw_user_meta_data || {},
+      ...extra,
       iat: now,
       exp: now + config.accessTokenTtl,
     },

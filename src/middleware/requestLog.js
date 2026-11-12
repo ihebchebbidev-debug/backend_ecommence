@@ -3,6 +3,7 @@
 // a client-reported problem can be found in the logs.
 import { randomUUID } from 'node:crypto';
 import { createLogger } from '../lib/logger.js';
+import { recordApiRequest } from '../lib/apiLog.js';
 
 const log = createLogger('http');
 const SLOW_MS = Number(process.env.SLOW_REQUEST_MS || 1000);
@@ -30,6 +31,7 @@ export function requestLog(req, res, next) {
     else if (res.statusCode >= 400) log.warn('request rejected', fields);
     else if (ms > SLOW_MS) log.warn('slow request', fields);
     else log.info('request', fields);
+    recordApiRequest(req, res, ms);
   });
 
   next();

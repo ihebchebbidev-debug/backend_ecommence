@@ -33,6 +33,8 @@ async function scopeFilter(ctx, table, policy, op, query) {
 
     case 'admin':
       if (!(await ctx.isAnyAdmin())) throw forbidden('admin role required');
+      // Limited admins only read admin tables; changing or clearing them is super-admin work.
+      if (op !== 'read' && !isAdmin) throw forbidden('super admin role required');
       return { where: [], params: [] };
 
     case 'profile':
@@ -237,7 +239,10 @@ async function loadEmbeds(ctx, rows, embeds, parentTable) {
   for (const embed of embeds) {
     const childPolicy = policyFor(embed.table);
     if (!childPolicy || childPolicy.scope === 'denied') continue;
-    const { columns } = parseSelect(embed.select);
+    const { columns: requested } = parseSelect(embed.select);
+    // Masked children need their id so the unpaid-commission mask can find them.
+    const childMasked = !!(childPolicy.planMask || childPolicy.planMaskClients);
+    const columns = requested !== '*' && childMasked && !/(^|[\s,"])id("|\s*(,|$))/.test(requested) ? `${requested}, "id"` : requested;
     // Detect the join direction from information_schema-free conventions:
     // child.<parent>_id → parent.id, otherwise parent.<child>_id → child.id
     const fkOnChild = `${parentTable.replace(/s$/, '')}_id`;
@@ -250,7 +255,7 @@ async function loadEmbeds(ctx, rows, embeds, parentTable) {
         `SELECT ${columns === '*' ? '*' : `${columns}, "id"`} FROM public.${embed.table} WHERE "id" = ANY($1::uuid[])`,
         [parentFkValues],
       );
-      const byId = new Map(child.map((c) => [c.id, c]));
+      const byId = new Map((await stripHidden(child, childPolicy, ctx)).map((c) => [c.id, c]));
       for (const r of rows) r[embed.alias] = byId.get(r[fkOnParent]) ?? null;
     } else if (parentIds.length) {
       const child = await ctx.q(
@@ -258,7 +263,7 @@ async function loadEmbeds(ctx, rows, embeds, parentTable) {
         [parentIds],
       );
       const grouped = new Map();
-      for (const c of child) {
+      for (const c of await stripHidden(child, childPolicy, ctx)) {
         if (!grouped.has(c[fkOnChild])) grouped.set(c[fkOnChild], []);
         grouped.get(c[fkOnChild]).push(c);
       }
@@ -533,13 +538,19 @@ async function authorizeWrite(ctx, table, policy, row, op, query = {}) {
   }
   if (policy.scope === 'user' || policy.scope === 'profile') {
     if (!ctx.userId) throw forbidden('JWT required');
+    // Read-only user tables (admin roles, wallets, …) are never written by their owner.
+    if (policy.writeRoles && policy.writeRoles.length === 0) throw forbidden('read-only table');
     const col = policy.scope === 'profile' ? 'id' : policy.userColumn;
     if (row?.[col] && row[col] !== ctx.userId) throw forbidden('cannot write rows owned by another user');
     return;
   }
   if (policy.scope === 'admin' || policy.scope === 'catalog') {
     if (!(await ctx.isAnyAdmin())) throw forbidden('admin role required');
+    // Super admins returned above. Limited admins may only append their own audit entries.
+    if (!(op === 'insert' && AUDIT_APPEND_TABLES.has(table))) throw forbidden('super admin role required');
   }
 }
 
-export { scopeFilter, respond, preferences, wantsSingle };
+const AUDIT_APPEND_TABLES = new Set(['audit_logs', 'admin_audit_logs']);
+
+export { scopeFilter, respond, preferences, wantsSingle, authorizeWrite, loadEmbeds };

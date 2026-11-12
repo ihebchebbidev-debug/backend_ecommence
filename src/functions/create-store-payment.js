@@ -3,6 +3,7 @@ import { minorUnit } from './_shared/currencyUnits.js';
 import { json, methodGuard } from './_shared/respond.js';
 
 import { decryptPaymentJson } from './_shared/paymentCrypto.js';
+import { platformAllowsPaymentSql } from './_shared/platformPaymentMethods.js';
 import { konnectBase, paymeeBase, FLOUCI_BASE, clictopayCall } from './_shared/storeGateways.js';
 import { readPaymentStore, storePaymentUrls, paymentAttemptUrls } from './_shared/storePaymentUrls.js';
 
@@ -38,6 +39,7 @@ export default async function createStorePayment(req, res, ctx) {
     `SELECT id, provider, credentials_encrypted, credentials_iv, credentials_version, is_active, connection_status
        FROM public.store_payment_integrations
       WHERE store_id=$1 AND is_active=true AND connection_status='connected' AND ($2::text IS NULL OR provider=$2)
+        AND ${platformAllowsPaymentSql('provider')}
       ORDER BY provider LIMIT 1`,
     [store_id, requestedProvider ? String(requestedProvider) : null],
   ).then((r) => r[0]);

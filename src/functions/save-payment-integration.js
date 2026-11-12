@@ -1,8 +1,10 @@
 // Port of supabase/functions/save-payment-integration/index.ts
 import { json, methodGuard } from './_shared/respond.js';
+import { canConfigureShop } from './_shared/storeAccess.js';
 
 import { canEncryptPaymentCredentials, encryptPaymentJson } from './_shared/paymentCrypto.js';
 import { normalizeMode } from './_shared/storeGateways.js';
+import { isPlatformPaymentMethodEnabled } from './_shared/platformPaymentMethods.js';
 export { canEncryptPaymentCredentials, encryptPaymentJson, decryptPaymentJson } from './_shared/paymentCrypto.js';
 
 export function maskPaymentCredentials(creds) {
@@ -41,17 +43,15 @@ export default async function savePaymentIntegration(req, res, ctx) {
   if (profile?.deleted_at || profile?.status === 'deleted') return json(res, { error: 'Compte supprimé' }, 403);
   if (profile?.suspended_at || profile?.status === 'suspended') return json(res, { error: 'Compte suspendu' }, 403);
 
-  const isSuperAdmin = await ctx.isSuperAdmin();
-  if (!isSuperAdmin) {
-    const member = await ctx.q(
-      'SELECT role FROM public.store_members WHERE store_id=$1 AND user_id=$2 AND role = ANY($3)',
-      [store_id, ctx.userId, ['owner', 'admin']],
-    ).then((r) => r[0]);
-    if (!member) return json(res, { error: 'Accès refusé au magasin' }, 403);
-  }
+  if (!(await canConfigureShop(ctx, store_id, 'canManagePayments'))) return json(res, { error: 'Accès refusé au magasin' }, 403);
 
   const store = await ctx.q('SELECT status FROM public.platform_stores WHERE id=$1', [store_id]).then((r) => r[0]);
   if (!store || store.status !== 'active') return json(res, { error: 'Magasin inactif' }, 403);
+
+  // The platform can switch a method off for every shop; sellers may still turn theirs off.
+  if (is_active && !(await isPlatformPaymentMethodEnabled(ctx, provider))) {
+    return json(res, { error: 'Ce moyen de paiement est désactivé par la plateforme', code: 'payment_method_disabled' }, 403);
+  }
 
   const hasNewCreds = !!credentials_changed && Object.keys(credentials || {}).length > 0;
   if (hasNewCreds) {

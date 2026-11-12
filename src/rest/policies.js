@@ -109,7 +109,8 @@ export const policies = {
   onboarding_answers: user(),
   otp_verification_logs: user('user_id', { writeRoles: [] }),
   payments: user('user_id', { alsoStore: 'store_id' }),
-  wallets: user(),
+  // Balances change only through billing RPCs (credit/debit with ledger), never by their owner.
+  wallets: user('user_id', { writeRoles: [] }),
   profiles: { scope: 'profile' },
 
   // ── global catalogue (read-only for everyone, admin writes) ────────
@@ -139,6 +140,8 @@ export const policies = {
   ad_match_consents: denied(),
   meta_capi_sent: denied(),
   store_meta_capi: denied(),
+  site_visits: denied(),
+  api_request_logs: denied(),
 };
 
 export function policyFor(table) {

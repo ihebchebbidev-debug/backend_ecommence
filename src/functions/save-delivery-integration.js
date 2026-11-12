@@ -1,7 +1,7 @@
 // Port of supabase/functions/save-delivery-integration/index.ts
 import { json, methodGuard } from './_shared/respond.js';
+import { canConfigureShop } from './_shared/storeAccess.js';
 import { deliveryKey, canEncrypt, encryptJson } from './_shared/crypto.js';
-import { checkSuperAdmin } from './_shared/delivery.js';
 
 /** Deno original mask: first2 + stars + last2 (or all-stars when <=4 chars). */
 function maskCredentials(creds) {
@@ -30,14 +30,7 @@ export default async function saveDeliveryIntegration(req, res, ctx) {
   if (profile?.suspended_at || profile?.status === 'suspended') return json(res, { error: 'Compte suspendu' }, 403);
 
   // ── Check store access (owner/admin) ──
-  const isSuperAdmin = await checkSuperAdmin(ctx, ctx.userId);
-  if (!isSuperAdmin) {
-    const member = await ctx.q(
-      `SELECT role FROM public.store_members WHERE store_id=$1 AND user_id=$2 AND role = ANY($3)`,
-      [store_id, ctx.userId, ['owner', 'admin']],
-    ).then((r) => r[0]);
-    if (!member) return json(res, { error: 'Accès refusé au magasin' }, 403);
-  }
+  if (!(await canConfigureShop(ctx, store_id, 'canManageSettings'))) return json(res, { error: 'Accès refusé au magasin' }, 403);
 
   // ── Check store is active ──
   const store = await ctx.q('SELECT status FROM public.platform_stores WHERE id=$1', [store_id]).then((r) => r[0]);
@@ -46,7 +39,8 @@ export default async function saveDeliveryIntegration(req, res, ctx) {
   // ── Load provider ──
   const provider = await ctx.q('SELECT * FROM public.delivery_providers WHERE id=$1', [provider_id]).then((r) => r[0]);
   if (!provider) return json(res, { error: 'Provider introuvable' }, 404);
-  if (!provider.is_active) return json(res, { error: 'Provider désactivé' }, 403);
+  // Admin switch (/admin/delivery-providers) turns both flags off together.
+  if (!provider.is_active || provider.is_visible_to_stores === false) return json(res, { error: 'Provider désactivé', code: 'provider_disabled' }, 403);
 
   // ── Validate required credential fields (only when new credentials given) ──
   const credSchema = provider.credentials_schema?.fields || [];

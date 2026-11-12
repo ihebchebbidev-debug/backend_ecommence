@@ -7,6 +7,7 @@ import { authContext } from './middleware/auth.js';
 import { requestLog } from './middleware/requestLog.js';
 import { errorHandler } from './lib/errors.js';
 import { createLogger } from './lib/logger.js';
+import { flushApiLog } from './lib/apiLog.js';
 import { restRouter } from './rest/router.js';
 import { rpcRouter } from './rpc/index.js';
 import { authRouter } from './auth/router.js';
@@ -180,6 +181,7 @@ if (isMain) {
   const shutdown = async (signal) => {
     log.info('shutting down', { signal });
     server.close();
+    await flushApiLog().catch(() => {});
     await pool.end().catch(() => {});
     process.exit(0);
   };

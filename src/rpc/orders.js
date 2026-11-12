@@ -1,9 +1,10 @@
+import { platformAllowsPaymentSql } from '../functions/_shared/platformPaymentMethods.js';
 import { ALL_PLANS_UNLOCKED } from './billing.js';
 // SQL RPC functions: orders (spec 3.3).
 import { parseLimits, limitViolation, LIMIT_KEYS } from '../lib/protection.js';
 import { createHash } from 'node:crypto';
 import { badRequest, forbidden } from '../lib/errors.js';
-import { id, text, couponCode, priceCheckout, major, permission } from '../lib/commerce.js';
+import { id, text, phone, couponCode, priceCheckout, major, permission } from '../lib/commerce.js';
 import { cleanCheckoutAnswers, answersAsNotes } from '../lib/checkoutExtras.js';
 import { checkoutConsent, recordCheckoutConsent } from '../lib/metaCheckoutConsent.js';
 import { captureAbandoned } from '../lib/abandonedCheckout.js';
@@ -359,6 +360,11 @@ export default {
         const after = await t.q('SELECT product_id, sum(quantity)::int AS qty FROM public.order_items WHERE order_id = $1 AND product_id IS NOT NULL GROUP BY product_id', [orderId]);
         const delta = stockDelta(before, after);
         for (const [productId, change] of [...delta.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+          // Taking more units than are left fails the whole edit, like checkout does.
+          if (change > 0) {
+            const p = await t.one('SELECT stock FROM public.products WHERE id = $1 AND store_id = $2 FOR UPDATE', [productId, order.store_id]);
+            if (p && p.stock != null && Number(p.stock) < change) throw badRequest('Insufficient stock', { code: 'INSUFFICIENT_STOCK' });
+          }
           await t.q('UPDATE public.products SET stock = stock - $2 WHERE id = $1 AND store_id = $3 AND stock IS NOT NULL', [productId, change, order.store_id]);
         }
       }
@@ -405,6 +411,8 @@ export default {
       notes: text(p_client?.notes, 1000),
     };
     if (!Array.isArray(p_items) || p_items.length === 0) throw badRequest('La commande doit contenir au moins un article');
+    // Same phone rule as abandoned capture and order tracking, so every order stays reachable/trackable.
+    try { phone(client.phone); } catch { throw badRequest('Numéro de téléphone invalide', { code: 'INVALID_PHONE' }); }
     // Bundle lines default to one bundle; legacy `quantity` there meant pieces.
     const items = p_items.map((i) => ({ ...i, bundle_count: i?.bundle_id ? (i.bundle_count ?? 1) : undefined }));
     const code = couponCode(p_coupon_code);
@@ -417,10 +425,19 @@ export default {
       // Serialize per shop: order numbers, coupon caps and stock stay consistent.
       await t.one('SELECT id FROM public.platform_stores WHERE id = $1 FOR UPDATE', [p_store_id]);
       if (requestId) {
-        const prior = await t.one('SELECT id, order_number, amount, status, checkout_fingerprint FROM public.orders WHERE store_id=$1 AND checkout_request_id=$2', [p_store_id, requestId]);
+        const prior = await t.one('SELECT id, order_number, amount, status, payment_status, client_id, checkout_fingerprint FROM public.orders WHERE store_id=$1 AND checkout_request_id=$2', [p_store_id, requestId]);
         if (prior?.status === 'abandoned') { abandoned = prior; }
         else if (prior) {
           if (prior.checkout_fingerprint !== fingerprint) throw badRequest('Checkout request reused with different content', { code: 'CHECKOUT_CONFLICT' });
+          // A retry (e.g. after a failed card start) may correct the delivery details: keep the
+          // unpaid order in step so the parcel goes where the shopper now asked.
+          if (prior.status === 'pending' && prior.payment_status !== 'paid') {
+            await t.q(`UPDATE public.orders SET client_name=$2, client_phone2=$3, address=$4, city=$5, region=$6, updated_at=now()
+              WHERE id=$1 AND status='pending' AND payment_status IS DISTINCT FROM 'paid'
+                AND (client_name, client_phone2, address, city, region) IS DISTINCT FROM ($2::text, $3::text, $4::text, $5::text, $6::text)`,
+              [prior.id, client.name, client.phone2, client.address, client.city, client.region]);
+            if (client.email && prior.client_id) await t.q('UPDATE public.clients SET email=$2 WHERE id=$1 AND email IS DISTINCT FROM $2', [prior.client_id, client.email]);
+          }
           return [{ order_id: prior.id, order_number: prior.order_number, total: prior.amount }];
         }
       }
@@ -428,7 +445,7 @@ export default {
       // Payment method must be one the seller actually offers.
       const isCard = p_payment_method === 'card';
       if (isCard) {
-        const prov = await t.one(`SELECT 1 AS ok FROM public.store_payment_integrations WHERE store_id=$1 AND is_active=true AND connection_status='connected' AND ($2::text IS NULL OR provider=$2) LIMIT 1`, [p_store_id, p_payment_provider || null]);
+        const prov = await t.one(`SELECT 1 AS ok FROM public.store_payment_integrations WHERE store_id=$1 AND is_active=true AND connection_status='connected' AND ($2::text IS NULL OR provider=$2) AND ${platformAllowsPaymentSql('provider')} LIMIT 1`, [p_store_id, p_payment_provider || null]);
         if (!prov) throw badRequest('Paiement par carte indisponible', { code: 'PAYMENT_METHOD_UNAVAILABLE' });
       } else {
         const cod = await t.one(`SELECT value FROM public.store_settings WHERE store_id=$1 AND key='payment_cod_enabled'`, [p_store_id]);
@@ -480,6 +497,8 @@ export default {
 
       let clientRow = null;
       if (client.phone) clientRow = await t.one('SELECT id FROM public.clients WHERE store_id = $1 AND phone = $2 LIMIT 1', [p_store_id, client.phone]);
+      // A returning customer's newly typed email is the one card payments must use.
+      if (clientRow && client.email) await t.q('UPDATE public.clients SET email=$2 WHERE id=$1 AND email IS DISTINCT FROM $2', [clientRow.id, client.email]);
       if (!clientRow) {
         clientRow = await t.one(
           `INSERT INTO public.clients (store_id, name, phone, email, city, region, note)

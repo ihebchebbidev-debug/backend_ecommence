@@ -14,6 +14,15 @@ const PROVIDER_COLUMNS = `
   dp.supports_open_package
 `;
 
+/** Live (non-test) First Delivery parcels that the carrier can still cancel through its API. */
+export function needsCarrierCancel(shipment) {
+  return shipment.provider_code === 'first_delivery'
+    && !!shipment.tracking_number
+    && !String(shipment.tracking_number).startsWith('TEST-')
+    && shipment.test_mode !== true
+    && ['created', 'pending', 'picked_up'].includes(shipment.status);
+}
+
 export default {
   async get_store_delivery_integrations({ p_store_id }, ctx) {
     await ctx.assertStoreAccess(p_store_id);
@@ -106,7 +115,8 @@ export default {
          te.event_type AS last_event_type,
          te.created_at AS last_event_at,
          ds.created_at,
-         ds.updated_at
+         ds.updated_at,
+         EXISTS (SELECT 1 FROM public.store_plan_usage pu WHERE pu.order_id = ds.order_id AND pu.commission_status = 'unpaid') AS plan_hidden
        FROM public.delivery_shipments ds
        JOIN public.orders o ON o.id = ds.order_id
        LEFT JOIN public.delivery_providers dp ON dp.id = ds.provider_id
@@ -124,12 +134,16 @@ export default {
       [p_store_id],
     );
 
-    return rows.map((r) => ({
-      ...r,
-      client_name: canViewCustomerData ? r.client_name : null,
-      client_phone: canViewCustomerData ? r.client_phone : null,
-      customer_data_visible: canViewCustomerData,
-    }));
+    // Same rule as the orders list: an unpaid plan commission hides that order's customer.
+    return rows.map(({ plan_hidden: planHidden, ...r }) => {
+      const visible = canViewCustomerData && !planHidden;
+      return {
+        ...r,
+        client_name: visible ? r.client_name : null,
+        client_phone: visible ? r.client_phone : null,
+        customer_data_visible: visible,
+      };
+    });
   },
 
   async update_delivery_shipment_status({ p_shipment_id, p_store_id, p_new_status }, ctx) {
@@ -138,10 +152,20 @@ export default {
     await permission(ctx, p_store_id, 'canManageOrders');
 
     const shipment = await ctx.one(
-      'SELECT id, order_id FROM public.delivery_shipments WHERE id = $1 AND store_id = $2',
+      `SELECT ds.id, ds.order_id, ds.status, ds.tracking_number, dp.code AS provider_code, sdi.test_mode
+         FROM public.delivery_shipments ds
+         LEFT JOIN public.delivery_providers dp ON dp.id = ds.provider_id
+         LEFT JOIN public.store_delivery_integrations sdi ON sdi.store_id = ds.store_id AND sdi.provider_id = ds.provider_id
+        WHERE ds.id = $1 AND ds.store_id = $2`,
       [p_shipment_id, p_store_id],
     );
     if (!shipment) throw forbidden('Shipment not found for this store');
+
+    // A live First Delivery parcel must be cancelled at the carrier first (cancel-delivery-shipment);
+    // recording it locally would leave the parcel active at the carrier.
+    if (p_new_status === 'cancelled' && needsCarrierCancel(shipment)) {
+      return { success: true, needs_api_cancel: true, shipment_id: p_shipment_id };
+    }
 
     await ctx.q(
       `UPDATE public.delivery_shipments SET status = $1, updated_at = now() WHERE id = $2`,
@@ -171,6 +195,7 @@ export default {
        JOIN public.delivery_providers dp ON dp.id = sdi.provider_id
         WHERE sdi.store_id = $1 AND sdi.enabled = true AND sdi.status = 'connected'
           AND (sdi.has_credentials = true OR dp.integration_mode = 'manual')
+          AND dp.is_active = true AND dp.is_visible_to_stores = true
        ORDER BY dp.sort_order, dp.name`,
       [p_store_id],
     );

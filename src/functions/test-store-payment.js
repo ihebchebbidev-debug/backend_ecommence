@@ -1,5 +1,6 @@
 // Port of supabase/functions/test-store-payment/index.ts
 import { json, methodGuard } from './_shared/respond.js';
+import { canConfigureShop } from './_shared/storeAccess.js';
 import { decryptPaymentJson } from './_shared/paymentCrypto.js';
 import { konnectBase, paymeeBase, FLOUCI_BASE, clictopayCall } from './_shared/storeGateways.js';
 
@@ -19,14 +20,7 @@ export default async function testStorePayment(req, res, ctx) {
   if (profile?.deleted_at || profile?.status === 'deleted') return json(res, { ok: false, message: 'Compte supprimé' }, 403);
   if (profile?.suspended_at || profile?.status === 'suspended') return json(res, { ok: false, message: 'Compte suspendu' }, 403);
 
-  const isSuperAdmin = await ctx.isSuperAdmin();
-  if (!isSuperAdmin) {
-    const member = await ctx.q(
-      'SELECT role FROM public.store_members WHERE store_id=$1 AND user_id=$2 AND role = ANY($3)',
-      [store_id, ctx.userId, ['owner', 'admin']],
-    ).then((r) => r[0]);
-    if (!member) return json(res, { ok: false, message: 'Accès refusé au magasin' }, 403);
-  }
+  if (!(await canConfigureShop(ctx, store_id, 'canManagePayments'))) return json(res, { ok: false, message: 'Accès refusé au magasin' }, 403);
 
   const integration = await ctx.q(
     'SELECT id, credentials_encrypted, credentials_iv, credentials_version FROM public.store_payment_integrations WHERE store_id=$1 AND provider=$2',
