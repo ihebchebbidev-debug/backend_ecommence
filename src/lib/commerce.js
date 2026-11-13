@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { badRequest, forbidden, ApiError } from './errors.js';
 import { applyOffers } from './offers.js';
 import { DELIVERY_KEYS, parseDeliverySettings, applyShopDelivery } from './checkoutExtras.js';
+import { variantForToken } from './experimentPricing.js';
 
 export function id(value) {
   if (typeof value !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)) throw badRequest('Invalid identifier');
@@ -96,14 +97,19 @@ export async function priceCheckout(db, storeId, items, currency, code = '', loc
     // Legacy frontend quantity meant pieces for bundles; explicit bundle_count removes ambiguity.
     const count = bundle ? boundedInt(item.bundle_count, 1, 1000) : boundedInt(item.quantity, 1, 1000);
     const qty = bundle ? boundedInt(bundle.quantity, 1, 1000) * count : count;
-    const unitMinor = money(bundle?.price ?? product.price,currency);
+    // A/B variant prices apply only after the signed token is re-checked; a bundle keeps its own price unless the variant changed it.
+    const experiment = await variantForToken(db, storeId, product.id, typeof item.ab_token === 'string' ? item.ab_token : null);
+    const ov = experiment?.overrides ?? {};
+    const bundleOv = bundle ? ov.bundles?.[bundle.id] : null;
+    const unitMinor = money(bundle ? (bundleOv?.price != null ? String(bundleOv.price) : bundle.price) : (ov.price != null ? String(ov.price) : product.price),currency);
     const lineMinor = unitMinor * count;
-    const deliveryMinor = money(bundle?.delivery_fee ?? product.delivery_fee,currency);
+    if (bundleOv?.name || bundleOv?.label) bundle = { ...bundle, name: bundleOv.name || bundle.name, label: bundleOv.label || bundle.label };
+    const deliveryMinor = money(bundle?.delivery_fee ?? (ov.delivery_fee != null ? String(ov.delivery_fee) : product.delivery_fee),currency);
     if (!Number.isSafeInteger(lineMinor)) throw badRequest('Total too large');
     const required = (stock.get(product.id)?.required ?? 0) + qty;
     stock.set(product.id,{product,required});
     if (product.stock != null && product.stock < required) throw badRequest('Insufficient stock',{code:'OUT_OF_STOCK'});
-    rows.push({item,product,bundle,qty,count,unitPrice:major(bundle ? unitMinor / bundle.quantity : unitMinor,currency),bundlePrice:bundle ? major(unitMinor,currency) : null,lineMinor,deliveryMinor});
+    rows.push({item,product,bundle,experiment,qty,count,unitPrice:major(bundle ? unitMinor / bundle.quantity : unitMinor,currency),bundlePrice:bundle ? major(unitMinor,currency) : null,lineMinor,deliveryMinor});
   }
   const subtotal = rows.reduce((s,r)=>s+r.lineMinor,0);
   // Shop offers (volume, gift boxes, buy X get Y, upsells) come before any coupon.

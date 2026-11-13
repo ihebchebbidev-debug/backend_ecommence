@@ -8,6 +8,7 @@ import { id, text, phone, couponCode, priceCheckout, major, permission } from '.
 import { cleanCheckoutAnswers, answersAsNotes } from '../lib/checkoutExtras.js';
 import { checkoutConsent, recordCheckoutConsent } from '../lib/metaCheckoutConsent.js';
 import { captureAbandoned } from '../lib/abandonedCheckout.js';
+import { recordOrderExperiment } from '../lib/experimentPricing.js';
 
 const ORDER_COLUMNS_SECURE = `
   o.id, o.order_number, o.client_id, o.client_name, o.client_phone, o.product_id,
@@ -546,6 +547,7 @@ export default {
       );
 
       await recordCheckoutConsent(t, order.id, p_store_id, adConsent);
+      await recordOrderExperiment(t, order.id, quote);
       // The capture's basket preview is replaced by the priced, stock-reserving lines below.
       if (abandoned) await t.q('DELETE FROM public.order_items WHERE order_id = $1', [order.id]);
 

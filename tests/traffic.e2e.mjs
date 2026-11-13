@@ -42,7 +42,12 @@ if (!process.env.DATABASE_URL) {
     slug = (Array.isArray(st.body) ? st.body[0] : st.body).created_store_slug;
     await sql('DELETE FROM public.site_visits');
   });
-  after(async () => { server.close(); await pool.end(); });
+  after(async () => {
+    await flushApiLog();
+    server.closeAllConnections?.();
+    await new Promise((r) => server.close(r));
+    await pool.end();
+  });
 
   test('a page view records path, country from the edge header, device and shop', async () => {
     const s = session();

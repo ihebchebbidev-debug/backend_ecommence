@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { badRequest, forbidden } from './errors.js';
 import { id, phone, text, publicStore, rateLimit, priceCheckout } from './commerce.js';
+import { recordOrderExperiment } from './experimentPricing.js';
 
 export function captureArgs(args) {
   const storeId = id(args.p_store_id), requestId = id(args.p_checkout_request_id);
@@ -40,6 +41,7 @@ export async function captureAbandoned(args, ctx) {
         first.bundle?.id || null, first.bundle?.name || null, first.bundle?.label || null, first.bundlePrice ?? null, first.bundle?.quantity || null]);
       orderId = row.id;
     }
+    await recordOrderExperiment(t, orderId, quote);
     // Keep the whole basket (not only its first product) so the seller sees what was left behind.
     // These lines never touch stock: merchandise_subtotal stays empty until the shopper completes the order.
     await t.q('DELETE FROM public.order_items WHERE order_id=$1', [orderId]);

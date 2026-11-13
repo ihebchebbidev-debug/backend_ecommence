@@ -10,6 +10,7 @@ export async function allowedTypes(ctx, storeId) {
   if (await ctx.hasStorePermission(storeId,'canManagePayments')) types.push('payment_received', 'payment_mismatch');
   if (await ctx.hasStorePermission(storeId,'canManageInventory')) types.push('low_stock');
   if (await ctx.hasStorePermission(storeId,'canManageSettings')) types.push('plan_quota', 'plan_update');
+  if (await ctx.hasStorePermission(storeId,'canViewAnalytics') || await ctx.hasStorePermission(storeId,'canManageProducts')) types.push('experiment_ended');
   return types;
 }
 export default {

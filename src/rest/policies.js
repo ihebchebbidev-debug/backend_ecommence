@@ -141,6 +141,10 @@ export const policies = {
   meta_capi_sent: denied(),
   store_meta_capi: denied(),
   site_visits: denied(),
+  store_experiments: denied(),
+  store_experiment_variants: denied(),
+  store_experiment_exposures: denied(),
+  store_experiment_events: denied(),
   api_request_logs: denied(),
 };
 

@@ -39,6 +39,8 @@ import mobileCommerceRpc from './mobileCommerce.js';
 import mobileCatalogRpc from './mobileCatalog.js';
 import accountRpc from './account.js';
 import trafficRpc from './traffic.js';
+import experimentsRpc from './experiments.js';
+import experimentEventsRpc from './experimentEvents.js';
 
 // Loyalty lives in loyalty.js; only the email marketing RPCs come from marketing.js.
 const emailMarketingRpc = Object.fromEntries(Object.entries(marketingRpc).filter(([k]) => k.startsWith('email_')));
@@ -74,6 +76,8 @@ export const rpcRegistry = {
   ...mobileCatalogRpc,
   ...accountRpc,
   ...trafficRpc,
+  ...experimentsRpc,
+  ...experimentEventsRpc,
 };
 
 export const rpcRouter = express.Router();

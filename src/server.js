@@ -21,6 +21,7 @@ import { docsRouter } from './docs/router.js';
 import { startAutomationWorker } from './lib/automationWebhooks.js';
 import { startExchangeRateWorker } from './lib/exchangeRates.js';
 import { startPushWorker } from './lib/pushWorker.js';
+import { startExperimentWorker } from './lib/experimentWorker.js';
 import { checkUnsubscribeToken } from './lib/marketing.js';
 
 const log = createLogger('server');
@@ -175,6 +176,7 @@ if (isMain) {
   startAutomationWorker((sql, p) => pool.query(sql, p).then((r) => r.rows), log);
   startExchangeRateWorker((sql, p) => pool.query(sql, p).then((r) => r.rows), log);
   startPushWorker((sql, p) => pool.query(sql, p).then((r) => r.rows), log);
+  startExperimentWorker((sql, p) => pool.query(sql, p).then((r) => r.rows), log);
   server.listen(config.port, () => {
     log.info('listening', { url: `http://localhost:${config.port}`, env: config.env, autoSchema: config.autoSchema });
   });
